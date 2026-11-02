@@ -34,9 +34,29 @@ function writeStatic() {
     page(
       "OpenCatalog preview",
       "preview.js",
-      `<div style="padding:6px 8px;font:12px system-ui;background:#fffbe6;border-bottom:1px solid #e6d98c">Browser preview (no InDesign). <button id="demo">Load demo data</button></div>
-<style>#app { height: calc(100% - 34px); }</style>`,
-    ),
+      `<div class="pv-banner">Browser preview (no InDesign).
+<button id="demo">Load demo data</button>
+<button id="demo2" title="Simulates editing the data file and pressing Reload">Load demo with changed prices</button></div>
+<style>
+.pv-banner { padding: 6px 8px; font: 12px system-ui; background: #fffbe6; border-bottom: 1px solid #e6d98c; }
+body { display: flex; flex-direction: column; }
+.pv-wrap { display: flex; height: calc(100% - 34px); }
+#app { width: 58%; height: 100%; border-right: 1px solid #ccc; }
+#doc { flex: 1; overflow: auto; font: 12px system-ui; background: #e8e8e8; }
+.pv-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: #fafafa; border-bottom: 1px solid #ccc; }
+.pv-page { margin: 12px; padding: 16px; background: #fff; min-height: 400px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+.pv-frame { border: 1px dashed #9ab; margin-bottom: 10px; padding: 4px 6px; cursor: pointer; }
+.pv-frame.pv-linked { border-style: solid; }
+.pv-frame.pv-sel { outline: 2px solid #1473e6; }
+.pv-frame-head { font-size: 10.5px; color: #666; display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }
+.pv-badge { background: #e3f0ff; color: #1473e6; border-radius: 3px; padding: 0 4px; }
+.pv-mini { font-size: 10px; padding: 0 4px; }
+.pv-text { white-space: pre-wrap; font: 14px Georgia, serif; }
+.pv-field { background: #e3f0ff; border-bottom: 1px solid #1473e6; }
+.pv-img { padding: 18px; text-align: center; background: #f2f2f2; color: #555; }
+.pv-muted { color: #888; }
+</style>`,
+    ).replace('<div id="app"></div>', '<div class="pv-wrap"><div id="app"></div><div id="doc"></div></div>'),
   );
 }
 

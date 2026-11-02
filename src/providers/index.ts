@@ -46,5 +46,8 @@ export function loadFromBytes(fileName: string, bytes: Uint8Array, opts: LoadOpt
   const text = decodeText(bytes);
   const delimiter = opts.delimiter ?? (fileName.toLowerCase().endsWith(".tsv") ? "\t" : undefined);
   const table = kind === "json" ? parseJson(text) : parseCsv(text, delimiter ? { delimiter } : {});
-  return { source: createDataSource(baseName, kind, table.rows, { columns: table.columns }) };
+  return {
+    source: createDataSource(baseName, kind, table.rows, { columns: table.columns, decimalSeparator: table.decimalSeparator }),
+  };
 }
+export { toCsv } from "./csv-writer";

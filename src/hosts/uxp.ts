@@ -3,6 +3,7 @@
  * the bundler leaves it as an external.
  */
 import { Host, PickedFile, storageSettings } from "./host";
+import { activeInDesignDocument } from "./indesign";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare const require: (id: string) => any;
@@ -14,7 +15,7 @@ export function createUxpHost(): Host {
 
   const readEntry = async (file: any, token?: string): Promise<PickedFile> => {
     const data: ArrayBuffer = await file.read({ format: formats.binary });
-    return { name: file.name, bytes: new Uint8Array(data), token };
+    return { name: file.name, bytes: new Uint8Array(data), token, path: file.nativePath };
   };
 
   return {
@@ -40,5 +41,16 @@ export function createUxpHost(): Host {
     },
     loadSettings: storageSettings.load,
     saveSettings: storageSettings.save,
+    getDocument: activeInDesignDocument,
+    async pickFolder() {
+      const folder = await fs.getFolder();
+      return folder ? String(folder.nativePath) : null;
+    },
+    async saveTextFile(suggestedName, text) {
+      const file = await fs.getFileForSaving(suggestedName, { types: [suggestedName.split(".").pop() ?? "csv"] });
+      if (!file) return false;
+      await file.write(text, { format: formats.utf8 });
+      return true;
+    },
   };
 }

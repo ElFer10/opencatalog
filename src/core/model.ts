@@ -30,6 +30,8 @@ export interface DataSource {
   keyField: string | null;
   /** ISO timestamp of the last load. */
   loadedAt: string;
+  /** Decimal separator used when numbers are written to or read from the document. */
+  decimalSeparator: "." | ",";
 }
 
 export type RawRow = Record<string, Value>;
@@ -42,6 +44,7 @@ export interface CreateSourceOptions {
   keyField?: string | null;
   /** Field type overrides by field name. */
   types?: Record<string, FieldType>;
+  decimalSeparator?: "." | ",";
   now?: Date;
 }
 
@@ -125,6 +128,7 @@ export function createDataSource(
     records,
     keyField,
     loadedAt: (opts.now ?? new Date()).toISOString(),
+    decimalSeparator: opts.decimalSeparator ?? ".",
   };
 }
 
@@ -156,4 +160,39 @@ export function formatValue(v: Value | undefined): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "boolean") return v ? "true" : "false";
   return String(v);
+}
+
+/** Text written into the document for a value (numbers use the source's decimal separator). */
+export function formatForDocument(v: Value | undefined, ds: Pick<DataSource, "decimalSeparator">): string {
+  if (typeof v === "number" && ds.decimalSeparator === ",") return String(v).replace(".", ",");
+  return formatValue(v);
+}
+
+/** Parse text edited in the document back into a value of the field's type. Returns undefined if invalid. */
+export function parseFromDocument(text: string, type: FieldType, ds: Pick<DataSource, "decimalSeparator">): Value | undefined {
+  if (text.trim() === "") return null;
+  if (type === "number") {
+    const t = text.trim();
+    const norm = ds.decimalSeparator === "," ? t.replace(/\s/g, "").replace(",", ".") : t.replace(/\s/g, "");
+    if (!/^-?\d+(\.\d+)?$/.test(norm)) return undefined;
+    return Number(norm);
+  }
+  if (type === "boolean") {
+    if (/^(true|yes|1)$/i.test(text.trim())) return true;
+    if (/^(false|no|0)$/i.test(text.trim())) return false;
+    return undefined;
+  }
+  return text;
+}
+
+export function getRecord(ds: DataSource, id: string): DataRecord | undefined {
+  return ds.records.find((r) => r.id === id);
+}
+
+/** Return a copy of the source with one value changed. */
+export function setRecordValue(ds: DataSource, id: string, field: string, value: Value): DataSource {
+  return {
+    ...ds,
+    records: ds.records.map((r) => (r.id === id ? { ...r, values: { ...r.values, [field]: value } } : r)),
+  };
 }

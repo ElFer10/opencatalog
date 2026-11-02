@@ -4,6 +4,8 @@ import type { RawRow, Value } from "../core/model";
 export interface ParsedTable {
   columns: string[];
   rows: RawRow[];
+  /** Decimal separator found in the source text, when it could be determined. */
+  decimalSeparator?: "." | ",";
 }
 
 /** Turn header cells into unique, non-empty column names. */

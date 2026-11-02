@@ -95,5 +95,5 @@ export function parseCsv(text: string, opts: CsvOptions = {}): ParsedTable {
   const matrix: Value[][] = raw.map((r, idx) =>
     idx <= headerIdx || !numbers ? r : r.map((cell) => coerceNumber(cell, decimalComma)),
   );
-  return tableFromMatrix(matrix);
+  return { ...tableFromMatrix(matrix), decimalSeparator: decimalComma ? "," : "." };
 }

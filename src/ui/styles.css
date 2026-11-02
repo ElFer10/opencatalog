@@ -34,7 +34,7 @@
 .oc-grid { flex: 1 1 auto; min-height: 0; overflow: auto; border-top: 1px solid var(--oc-border); }
 .oc-tr { display: flex; border-bottom: 1px solid var(--oc-border); }
 .oc-head { font-weight: 600; background: var(--oc-bg); }
-.oc-gutter { width: 24px; flex: 0 0 auto; }
+.oc-gutter { width: 32px; flex: 0 0 auto; }
 .oc-th, .oc-td { flex: 0 0 auto; box-sizing: border-box; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-th { cursor: pointer; }
 .oc-th.oc-key { text-decoration: underline; }
@@ -47,3 +47,15 @@
 .oc-status { padding: 4px 8px; border-top: 1px solid var(--oc-border); }
 .oc-error { color: #d7373f; }
 .oc-info { color: #2d9d78; }
+.oc-docbar { border-top: 1px solid var(--oc-border); }
+.oc-docbar .oc-row { padding: 2px 8px; }
+.oc-path { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--oc-muted); }
+.oc-report { border-top: 1px solid var(--oc-border); max-height: 120px; overflow: auto; }
+.oc-issue { padding: 2px 8px 2px 20px; cursor: pointer; }
+.oc-issue:hover { text-decoration: underline; }
+.oc-rec { cursor: default; }
+.oc-sel { background: rgba(20, 115, 230, 0.16); }
+.oc-gutter { text-align: center; color: var(--oc-muted); padding-top: 3px; box-sizing: border-box; }
+.oc-placed { color: #2d9d78; font-weight: 600; }
+.oc-edited { background: rgba(230, 170, 20, 0.25); }
+.oc-edited-note { color: #b07800; }

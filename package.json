@@ -1,6 +1,6 @@
 {
   "name": "opencatalog",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open-source data-driven catalog publishing for Adobe InDesign (UXP plugin).",
   "license": "Apache-2.0",
   "private": true,
