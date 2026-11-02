@@ -323,6 +323,18 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
     return { pagesAdded: this.pageCount - before };
   }
 
+  relink(item: LinkedItem<MemRef>, key: string): void {
+    const f = this.frame(item.ref.frameId);
+    const { run, row, col } = item.ref;
+    if (row !== undefined && col !== undefined) {
+      const cell = f.table?.rows[row]?.[col];
+      if (cell?.link) cell.link = retargetEncoded(cell.link, key);
+    } else if (run !== undefined) {
+      const r = f.runs[run];
+      if (r?.link) r.link = retargetEncoded(r.link, key);
+    } else if (f.label) f.label = retargetEncoded(f.label, key);
+  }
+
   pdfPresets(): string[] {
     return ["[High Quality Print]", "[Press Quality]", "[Smallest File Size]"];
   }

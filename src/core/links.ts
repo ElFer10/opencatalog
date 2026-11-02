@@ -88,6 +88,8 @@ export interface DocumentAdapter<Ref = unknown> {
   paginateFlow(items: FlowItemLike[], separator: "paragraph" | "tab"): PaginateResult;
   pdfPresets(): string[];
   exportPdf(path: string, preset: string): void;
+  /** Point a placed field at another record (same source and field). */
+  relink(item: LinkedItem<Ref>, key: string): void;
 }
 
 export interface TemplateInfo {

@@ -2,7 +2,7 @@
   "manifestVersion": 5,
   "id": "org.opencatalog.indesign",
   "name": "OpenCatalog",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "main": "index.html",
   "host": {
     "app": "ID",
@@ -37,6 +37,7 @@
     "localFileSystem": "request",
     "network": {
       "domains": "all"
-    }
+    },
+    "allowCodeGenerationFromStrings": true
   }
 }

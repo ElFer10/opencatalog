@@ -38,7 +38,7 @@ export interface DataRecord {
   values: Record<string, Value>;
 }
 
-export type SourceKind = "csv" | "xlsx" | "json";
+export type SourceKind = "csv" | "xlsx" | "json" | "rest" | "notion" | "sql";
 
 export interface DataSource {
   id: string;

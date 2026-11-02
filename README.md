@@ -2,9 +2,9 @@
 
 Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP plugin.
 
-> Status: **phase 3 (0.4.0)** — data sources, placing and two-way sync, layout tools (formats,
-> computed fields, image URLs, tables, repeated blocks, change tracking) and automatic pagination
-> with PDF export.
+> Status: **phase 4 (0.5.0)** — files and remote sources (REST/JSON/CSV URLs, Notion, SQL via a
+> local helper), placing and two-way sync, layout tools, pagination, versions per language/market,
+> one PDF per record, and scripting.
 
 ## What works today
 
@@ -98,6 +98,40 @@ Known limits: template copies use the margins of the template's page for every p
 inside/outside margins on facing pages are not yet handled); flow mode does not yet handle
 inline images or keep records together across frame breaks.
 
+### Connections, versions, merged PDFs and scripting (phase 4)
+
+- **Connect…** loads data from somewhere other than a file. Connections are saved by name; tokens
+  are kept in UXP secure storage, never in the plain settings. **Reload** fetches again (with the
+  usual new/changed/deleted comparison).
+  - **URL (JSON / CSV)** — any REST endpoint or export link. Optional header with `{token}`
+    (e.g. `Authorization: Bearer {token}`), the path to the record list (`data.items`) and the
+    path to the next-page link (`links.next`) for paginated APIs.
+  - **Notion database** — paste the database link and an internal integration token, and share the
+    database with the integration. Titles, text, numbers, selects, multi-selects, dates, files
+    (as URLs), formulas, rollups, relations and unique IDs become fields.
+  - **SQL database** — through `tools/opencatalog-helper.py`, a small local server (Python standard
+    library) that the panel calls, because UXP plugins cannot open database connections.
+    ```bash
+    python3 tools/opencatalog-helper.py           # prints the token to paste into the panel
+    ```
+    Connection `sqlite:/path/to/catalog.db` works out of the box; `odbc:DSN=…;UID=…;PWD=…` needs
+    `pip install pyodbc` and an ODBC driver (SQL Server, MySQL, PostgreSQL, FileMaker…). The helper
+    listens only on 127.0.0.1, requires the token and accepts only SELECT/WITH queries unless it
+    is started with `--allow-write`.
+- **Versions**: fields such as `Namn_sv` / `Namn_es` or `Price (SE)` / `Price (ES)` are detected as
+  versions of `Namn` / `Price` (a code must be used by at least two fields). A missing base field
+  is added so it can be placed. Choose **Version** in the toolbar and Update document; **PDF for each
+  version** updates and exports the document once per version (`document-sv.pdf`, `document-es.pdf`).
+  Update Panel writes edits back to the version's own field.
+- **One PDF per record** (in Paginate…): design a document that shows one record — a recipe card,
+  a product sheet, a price label — and export it for every record in the list (or the selected
+  ones), named by a field of your choice. The document is restored to its original record at the end.
+- **Script…** runs JavaScript in the panel with an `oc` object: `oc.records()` (list order),
+  `oc.all()`, `oc.fields`, `oc.selected()`, `oc.select(ids)`, `oc.versions`, `oc.setVersion(v)`,
+  `await oc.updateDocument(ids?)`, `await oc.placeFields(fields)`, `await oc.paginate()`,
+  `oc.exportPdf(path, preset?)`, `oc.document`, `oc.indesign` (the UXP InDesign DOM) and `oc.log()`.
+  Scripts are saved per data source.
+
 ## Install in InDesign (development)
 
 Requirements: Node.js 18+, InDesign 2023 (18.5) or later, and Adobe **UXP Developer Tools**
@@ -126,7 +160,8 @@ Double-click a placed field in the simulated page to edit it and try **Update pa
 npm run typecheck   # TypeScript, strict
 npm test            # Vitest unit tests (core + providers)
 npm run check       # all of the above + build
-npm run e2e         # browser end-to-end tests of the preview (needs Playwright + Chromium)
+npm run e2e         # browser end-to-end tests of the preview (needs Playwright + Chromium, Python 3)
+npm run test:helper # unit tests of the SQL helper
 ```
 
 ```
@@ -136,6 +171,7 @@ src/
   ui/          the panel (plain DOM, no framework)
   hosts/       environment adapters: UXP + InDesign DOM, browser preview, in-memory document
 plugin/        UXP manifest
+tools/         opencatalog-helper.py (local SQL helper) and its tests
 test/          unit tests and fixtures
 ```
 
@@ -147,7 +183,7 @@ test/          unit tests and fixtures
 | 1 — MVP | Place text and image fields, store links in the document, Update Document / Update Panel, place count and error report ✅ |
 | 2 — Layout | Computed fields, number formats, images from URLs, repeated layout blocks, linked tables, synchronize (new/changed/deleted) ✅ |
 | 3 — Pagination | Template and text-flow pagination, page breaks per group, page insertion, PDF export ✅ (guide/master/position modes later) |
-| 4 — Advanced | Local helper for ODBC/SQLite, generic REST connector for PIM/DAM, versions, merged documents, scripting API |
+| 4 — Advanced | Local helper for ODBC/SQLite, REST/URL and Notion connectors, versions, one PDF per record, scripting ✅ |
 
 ## Clean-room policy
 
@@ -165,8 +201,9 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 ### En español (resumen)
 
 OpenCatalog es una alternativa open source para crear catálogos en InDesign a partir de datos.
-La versión 0.4.0 carga CSV, Excel y JSON, coloca campos de texto e imagen y los mantiene sincronizados,
-pagina automáticamente (por plantilla o por flujo de texto) y exporta a PDF.
+La versión 0.5.0 carga archivos (CSV, Excel, JSON) y fuentes remotas (URL/REST, Notion y bases SQL
+mediante un pequeño helper local), coloca campos y los mantiene sincronizados, pagina, exporta a PDF,
+gestiona versiones por idioma o mercado, genera un PDF por registro y permite automatizar con scripts.
 Añade formatos de campo, campos calculados con expresiones, imágenes desde URL, tablas vinculadas,
 repetición de un bloque de producto por registro y detección de registros nuevos, cambiados y borrados.
 Para probarla: `npm install && npm run build`, luego en UXP Developer Tools → *Add Plugin* →

@@ -3,6 +3,7 @@
  * the bundler leaves it as an external.
  */
 import { cacheFileName } from "../core/images";
+import { decodeUtf8 } from "../providers/table";
 import { DownloadResult, Host, PickedFile, storageSettings } from "./host";
 import { activeInDesignDocument } from "./indesign";
 
@@ -79,6 +80,26 @@ export function createUxpHost(): Host {
         }
       }
       return result;
+    },
+    async fetch(url, req) {
+      try {
+        const res = await fetch(url, { method: req?.method ?? "GET", headers: req?.headers, body: req?.body });
+        return { status: res.status, text: await res.text() };
+      } catch (e) {
+        return { status: 0, text: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getSecret(name) {
+      try {
+        const v = await uxp.storage.secureStorage.getItem(`opencatalog.${name}`);
+        if (v === null || v === undefined) return undefined;
+        return typeof v === "string" ? v : decodeUtf8(new Uint8Array(v)) ?? undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    async setSecret(name, value) {
+      await uxp.storage.secureStorage.setItem(`opencatalog.${name}`, value);
     },
     async pickSavePath(suggestedName) {
       const file = await fs.getFileForSaving(suggestedName, { types: [suggestedName.split(".").pop() ?? "pdf"] });

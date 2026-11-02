@@ -86,3 +86,7 @@
 /* When everything is expanded the panel scrolls as a whole instead of squashing the list. */
 .oc-panel { overflow-y: auto; }
 .oc-panel > .oc-grid { min-height: 180px; }
+.oc-connect, .oc-scriptbox { margin: 0 8px 4px; border-left: 2px solid var(--oc-accent); }
+.oc-sql, .oc-script { width: calc(100% - 16px); margin: 0 8px; font-family: Menlo, Consolas, monospace; font-size: 11px; box-sizing: border-box; }
+.oc-script { min-height: 120px; }
+.oc-output { margin: 0 8px 4px; padding: 4px 6px; max-height: 120px; overflow: auto; font: 11px Menlo, Consolas, monospace; background: rgba(127,127,127,0.12); white-space: pre-wrap; }

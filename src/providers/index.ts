@@ -57,3 +57,4 @@ export function loadFromBytes(fileName: string, bytes: Uint8Array, opts: LoadOpt
   };
 }
 export { toCsv } from "./csv-writer";
+export * from "./remote";

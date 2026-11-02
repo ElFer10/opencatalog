@@ -1,5 +1,6 @@
 /** What the panel needs from its environment (InDesign UXP or a browser preview). */
 import type { DocumentAdapter } from "../core/links";
+import type { Fetcher } from "../providers/remote";
 
 export interface PickedFile {
   name: string;
@@ -26,6 +27,11 @@ export interface Host {
   saveTextFile(suggestedName: string, text: string): Promise<boolean>;
   /** Ask for a save location; resolves the native path, or null when cancelled. */
   pickSavePath(suggestedName: string): Promise<string | null>;
+  /** HTTP access for remote data sources. */
+  fetch: Fetcher;
+  /** Secrets (API tokens) kept out of the plain settings when the host has secure storage. */
+  getSecret(name: string): Promise<string | undefined>;
+  setSecret(name: string, value: string): Promise<void>;
   /** Download image URLs into a local cache. Returns URL → local path, plus failures. */
   downloadImages(urls: readonly string[]): Promise<DownloadResult>;
 }

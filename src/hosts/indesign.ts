@@ -528,6 +528,15 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
       return { pagesAdded: doc.pages.length - before };
     },
 
+    relink(item, key) {
+      const node = item.ref.node;
+      if (!valid(node)) throw new Error("The linked content was deleted");
+      if (item.kind === "inline-text") {
+        const attr = node.xmlAttributes.itemByName(LINK_LABEL);
+        if (valid(attr)) attr.value = retargetEncoded(String(attr.value), key);
+      } else node.insertLabel(LINK_LABEL, retargetEncoded(node.extractLabel(LINK_LABEL), key));
+    },
+
     pdfPresets(): string[] {
       const presets = app.pdfExportPresets;
       const out: string[] = [];

@@ -1,4 +1,4 @@
-# InDesign test checklist (phases 1–3)
+# InDesign test checklist (phases 1–4)
 
 The core is unit-tested and the panel is tested in the browser preview, but the InDesign
 adapter (`src/hosts/indesign.ts`) can only be verified inside InDesign. Run through this list
@@ -60,3 +60,18 @@ If something fails, open UXP Developer Tools › *Debug* for the plugin and copy
 20. **Update after pagination** — Change prices in the data, Reload, **Update document**: the
     paginated pages update in place.
 21. **PDF** — Choose a preset and **Export PDF…**; the PDF opens correctly.
+
+## Phase 4
+
+22. **URL source** — Connect… › URL, a public JSON or CSV link. The first time, InDesign may ask
+    to allow network access. Reload fetches again.
+23. **Notion** — Create an integration at notion.so/my-integrations, share the recipe database
+    with it, Connect… › Notion database with the link and token. Fields appear with the title first.
+24. **SQL helper** — Run `python3 tools/opencatalog-helper.py`, paste the token, connection
+    `sqlite:/path/to/file.db`, query `SELECT * FROM …`. Try an `UPDATE`: it must be refused.
+25. **Versions** — Data with `Namn_sv` / `Namn_es`: place `Namn`, switch Version to `es`,
+    Update document; then **PDF for each version** writes one PDF per language.
+26. **One PDF per record** — A document showing one recipe; Paginate… › One PDF per record, named
+    by `Namn`. One PDF per recipe appears and the document ends showing the original recipe.
+27. **Script** — Script… › `oc.log(oc.records().length)` › Run. Then something using
+    `oc.indesign`, e.g. `oc.log(oc.indesign.app.activeDocument.pages.length)`.

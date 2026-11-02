@@ -13,7 +13,11 @@ import {
   FieldSettings,
   SourceDiff,
   applyFieldSettings,
+  applyVersion,
   buildFlow,
+  detectVersions,
+  joinPath,
+  versionFieldFor,
   groupStarts,
   planTemplatePagination,
   diffSources,
@@ -47,7 +51,9 @@ import {
   withKeyField,
 } from "../core";
 import type { Host, PickedFile } from "../hosts/host";
-import { ENCODING_LABELS, EncodingChoice, SUPPORTED_EXTENSIONS, TextEncoding, loadFromBytes, toCsv } from "../providers";
+import { ENCODING_LABELS, EncodingChoice, RemoteSourceSpec, SUPPORTED_EXTENSIONS, TextEncoding, loadFromBytes, loadRemote, toCsv } from "../providers";
+import { renderConnectBox, secretKey } from "./connect";
+import { ScriptHost, renderScriptBox, runScript } from "./scripting";
 import { add, clear, h, select } from "./dom";
 import { renderFieldsEditor } from "./fields-editor";
 
@@ -68,6 +74,9 @@ interface SourcePrefs {
   gap?: number;
   tableHeader?: boolean;
   pagination?: PaginationPrefs;
+  /** Active version (language/market) code; null/absent = default. */
+  version?: string | null;
+  scripts?: { name: string; code: string }[];
 }
 
 interface PaginationPrefs {
@@ -79,12 +88,16 @@ interface PaginationPrefs {
   headings: boolean;
   separator: "paragraph" | "tab";
   pdfPreset?: string;
+  /** Field used to name files when exporting one PDF per record. */
+  nameField?: string;
 }
 
 const DEFAULT_PAGINATION: PaginationPrefs = { mode: "template", scope: "view", pageBreaks: false, headings: true, separator: "paragraph" };
 
 interface Settings {
-  last?: { token: string; name: string; sheet?: string };
+  last?: { token: string; name: string; sheet?: string; remote?: string };
+  /** Saved remote connections (secrets are kept in secure storage, not here). */
+  remotes?: RemoteSourceSpec[];
   sources: Record<string, SourcePrefs>;
   /** Forced text encoding per data file name (absent = auto-detect). */
   encodings?: Record<string, EncodingChoice>;
@@ -114,6 +127,11 @@ export class Panel {
   private downloaded = new Map<string, string>();
   private editingFormat: string | null = null;
   private showPaginate = false;
+  private showConnect = false;
+  private showScript = false;
+  private remote: RemoteSourceSpec | null = null;
+  private scriptOutput: string[] = [];
+  private scriptDraft: { name: string; code: string } | null = null;
   private file: PickedFile | null = null;
   private sheets: string[] = [];
   private sheet: string | undefined;
@@ -139,6 +157,7 @@ export class Panel {
   private edited = new Map<string, Value>();
 
   private readonly toolbar = h("div", { class: "oc-toolbar" });
+  private readonly connectBox = h("div", { class: "oc-connectwrap" });
   private readonly searchInput = h("input", {
     class: "oc-search",
     type: "text",
@@ -158,7 +177,7 @@ export class Panel {
     clear(root);
     root.appendChild(
       h("div", { class: "oc-panel" },
-        this.toolbar, h("div", { class: "oc-searchrow" }, this.searchInput), this.controls, this.filterBox, this.fieldsBox,
+        this.toolbar, this.connectBox, h("div", { class: "oc-searchrow" }, this.searchInput), this.controls, this.filterBox, this.fieldsBox,
         this.docBar, this.reportBox, this.grid, this.status),
     );
     this.renderAll();
@@ -170,6 +189,11 @@ export class Panel {
   async restore(): Promise<void> {
     const last = this.settings.last;
     if (!last) return;
+    if (last.remote) {
+      const spec = this.settings.remotes?.find((r) => r.name === last.remote);
+      if (spec) await this.openRemote(spec);
+      return;
+    }
     const file = await this.host.reread(last.token);
     if (file) this.openPicked(file, last.sheet);
   }
@@ -184,6 +208,10 @@ export class Panel {
   }
 
   async reload(): Promise<void> {
+    if (this.remote) {
+      if (this.edited.size > 0) this.message = { text: `Reloading discarded ${plural(this.edited.size, "unsaved edit")}.`, error: false };
+      return this.openRemote(this.remote, true);
+    }
     if (!this.file?.token) return;
     if (this.edited.size > 0) {
       this.message = { text: `Reloading discarded ${plural(this.edited.size, "unsaved edit")}.`, error: false };
@@ -198,8 +226,39 @@ export class Panel {
       const { source, sheets, encoding } = loadFromBytes(file.name, file.bytes, { sheet, encoding: this.settings.encodings?.[file.name] ?? "auto" });
       this.encoding = encoding;
       this.file = file;
+      this.remote = null;
       this.sheets = sheets ?? [];
       this.sheet = sheets ? sheet ?? sheets[0] : undefined;
+      this.useSource(source, keepState);
+      if (file.token) this.settings.last = { token: file.token, name: file.name, sheet: this.sheet };
+      this.persist();
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Load a remote source (URL, Notion, SQL helper). */
+  async openRemote(spec: RemoteSourceSpec, keepState = false): Promise<void> {
+    try {
+      this.info(`Loading ${spec.name}…`);
+      const secret = await this.host.getSecret(secretKey(spec));
+      const source = await loadRemote(this.host.fetch, spec, secret);
+      this.file = null;
+      this.encoding = undefined;
+      this.sheets = [];
+      this.sheet = undefined;
+      this.remote = spec;
+      this.useSource(source, keepState);
+      this.settings.last = { token: "", name: spec.name, remote: spec.name };
+      this.persist();
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Common path after a source was read: key/decimal prefs, diff on reload, view state. */
+  private useSource(source: DataSource, keepState: boolean): void {
+    {
       const prefs = this.settings.sources[source.id];
       let ds = source;
       if (prefs?.keyField !== undefined && prefs.keyField !== source.keyField) {
@@ -234,16 +293,13 @@ export class Panel {
       for (const id of [...this.selected]) if (!getRecord(ds, id)) this.selected.delete(id);
       if (!keepState) this.diff = null;
       this.limit = PAGE;
-      if (file.token) this.settings.last = { token: file.token, name: file.name, sheet: this.sheet };
-      this.persist();
       this.renderAll();
-    } catch (e) {
-      this.fail(e);
     }
   }
 
   private prefs(): SourcePrefs | undefined {
-    return this.source ? this.settings.sources[this.source.id] : undefined;
+    const id = this.raw?.id ?? this.source?.id;
+    return id ? this.settings.sources[id] : undefined;
   }
 
   /** Re-apply formats and computed fields on top of the raw source. */
@@ -251,7 +307,8 @@ export class Panel {
     if (!this.raw) return;
     const prefs = this.prefs();
     const settings: FieldSettings = { formats: prefs?.formats, computed: prefs?.computed };
-    const { source, errors } = applyFieldSettings(this.raw, settings);
+    const versioned = applyVersion(this.raw, prefs?.version ?? null);
+    const { source, errors } = applyFieldSettings(versioned, settings);
     this.source = source;
     this.computedErrors = errors;
   }
@@ -486,6 +543,170 @@ export class Panel {
     this.renderGrid();
   }
 
+  /** Save a connection (and its secret) and load it. */
+  private async connect(spec: RemoteSourceSpec, secret: string | null): Promise<void> {
+    try {
+      if (secret !== null) await this.host.setSecret(secretKey(spec), secret);
+      const others = (this.settings.remotes ?? []).filter((r) => r.name !== spec.name);
+      this.settings.remotes = [...others, spec];
+      this.persist();
+      await this.openRemote(spec);
+      if (!this.message?.error) this.showConnect = false;
+      this.renderToolbar();
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  setVersion(version: string | null): void {
+    const p = this.settingsFor();
+    if (!p) return;
+    p.version = version;
+    this.rebuild();
+    this.persist();
+    this.renderAll();
+  }
+
+  private exportFolderName(name: string): string {
+    return name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 120) || "untitled";
+  }
+
+  private pdfPreset(doc: DocumentAdapter): string {
+    const presets = doc.pdfPresets();
+    const want = this.pagination().pdfPreset;
+    const preset = want && presets.includes(want) ? want : presets[0];
+    if (!preset) throw new Error("No PDF presets found in InDesign.");
+    return preset;
+  }
+
+  /** Update the document and export one PDF per version (language/market). */
+  async exportPdfPerVersion(): Promise<void> {
+    const doc = this.requireDocument();
+    if (!doc || !this.raw) return;
+    const versions = detectVersions(this.raw.fields).versions;
+    if (versions.length === 0) return this.fail(new Error("This data source has no versions (fields like Name_sv / Name_es)."));
+    try {
+      const preset = this.pdfPreset(doc);
+      const folder = await this.host.pickFolder();
+      if (!folder) return;
+      const original = this.prefs()?.version ?? null;
+      const base = this.exportFolderName(doc.name.replace(/\.indd$/i, ""));
+      const written: string[] = [];
+      for (const v of versions) {
+        this.setVersion(v);
+        await this.updateDocument(false, undefined, true);
+        const path = joinPath(folder, `${base}-${v}.pdf`);
+        doc.exportPdf(path, preset);
+        written.push(path);
+      }
+      this.setVersion(original);
+      await this.updateDocument(false, undefined, true);
+      this.info(`Exported ${plural(written.length, "PDF")} (${versions.join(", ")}) to ${folder}.`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /**
+   * One PDF per record: the document shows one record (the template); for each record in scope the
+   * links are pointed at it, the document is updated and exported, and finally restored.
+   */
+  async exportPdfPerRecord(): Promise<void> {
+    const ds = this.source;
+    const doc = this.requireDocument();
+    if (!ds || !doc) return;
+    const opts = this.pagination();
+    const records = this.paginationRecords(opts.scope);
+    if (records.length === 0) return this.fail(new Error("No records to export."));
+    const mine = doc.scan().filter((i) => i.link.source === ds.id);
+    const keys = new Set(mine.map((i) => i.link.key));
+    if (keys.size !== 1) {
+      return this.fail(new Error(keys.size === 0 ? "Place fields of one record in the document first (it works as the template)." : `The document shows ${keys.size} records; for one PDF per record it must show exactly one.`));
+    }
+    const sample = [...keys][0]!;
+    const nameField = opts.nameField && ds.fields.some((f) => f.name === opts.nameField) ? opts.nameField : ds.keyField ?? ds.fields[0]!.name;
+    try {
+      const preset = this.pdfPreset(doc);
+      const folder = await this.host.pickFolder();
+      if (!folder) return;
+      const used = new Map<string, number>();
+      let current = sample;
+      let count = 0;
+      const relinkAll = (from: string, to: string) => {
+        doc.transaction("OpenCatalog: Relink", () => {
+          for (const item of doc.scan()) if (item.link.source === ds.id && item.link.key === from) doc.relink(item, to);
+        });
+      };
+      try {
+        for (const r of records) {
+          relinkAll(current, r.id);
+          current = r.id;
+          await this.updateDocument(false, new Set([r.id]), true);
+          let name = this.exportFolderName(formatValue(r.values[nameField]) || r.id);
+          const n = (used.get(name) ?? 0) + 1;
+          used.set(name, n);
+          if (n > 1) name = `${name}-${n}`;
+          doc.exportPdf(joinPath(folder, `${name}.pdf`), preset);
+          count++;
+          this.info(`Exported ${count} of ${records.length}…`);
+        }
+      } finally {
+        relinkAll(current, sample);
+        await this.updateDocument(false, new Set([sample]), true);
+      }
+      this.info(`Exported ${plural(count, "PDF")}, one per record, to ${folder} (named by ${nameField}).`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** The `oc` object scripts receive. */
+  private scriptHost(): ScriptHost {
+    return {
+      api: (log) => {
+        const panel = this;
+        const indesign = (() => {
+          try {
+            return this.host.kind === "uxp" ? (globalThis as unknown as { require: (m: string) => unknown }).require("indesign") : null;
+          } catch {
+            return null;
+          }
+        })();
+        return {
+          get source() { return panel.source; },
+          get fields() { return panel.source?.fields.map((f) => f.name) ?? []; },
+          get versions() { return panel.raw ? detectVersions(panel.raw.fields).versions : []; },
+          records: () => (panel.source ? applyView(panel.viewSource(panel.source), panel.view).records : []),
+          all: () => panel.source?.records ?? [],
+          selected: () => [...panel.selected],
+          select: (ids: string[]) => panel.selectRecords(ids),
+          setVersion: (v: string | null) => panel.setVersion(v),
+          updateDocument: (ids?: string[]) => panel.updateDocument(false, ids ? new Set(ids) : undefined, true),
+          placeFields: (fields: string[]) => panel.placeFields(fields),
+          paginate: () => panel.paginate(),
+          exportPdf: (path: string, preset?: string) => {
+            const doc = panel.host.getDocument();
+            if (!doc) throw new Error("No document open");
+            doc.exportPdf(path, preset ?? panel.pdfPreset(doc));
+          },
+          get document() { return panel.host.getDocument(); },
+          indesign,
+          log,
+        };
+      },
+    };
+  }
+
+  async runUserScript(code: string): Promise<void> {
+    this.scriptOutput.push(`— run ${new Date().toLocaleTimeString()}`);
+    try {
+      await runScript(code, this.scriptHost(), (line) => this.scriptOutput.push(line));
+    } catch (e) {
+      this.scriptOutput.push(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    this.renderDocBar();
+  }
+
   private pagination(): PaginationPrefs {
     return { ...DEFAULT_PAGINATION, ...(this.prefs()?.pagination ?? {}) };
   }
@@ -598,7 +819,10 @@ export class Panel {
     try {
       const items = doc.scan();
       const plan = planUpdatePanel(items, ds);
-      this.raw = applyPanelPlan(this.raw, plan);
+      const version = this.prefs()?.version ?? null;
+      const raw = this.raw;
+      const mapped = { ...plan, edits: plan.edits.map((e) => ({ ...e, field: versionFieldFor(raw, e.field, version) })) };
+      this.raw = applyPanelPlan(this.raw, mapped);
       this.rebuild();
       for (const e of plan.edits) this.edited.set(cellKey(e.recordId, e.field), e.to);
       this.counts = placeCounts(items, ds.id);
@@ -668,9 +892,30 @@ export class Panel {
     const ds = this.source;
     add(this.toolbar,
       h("button", { class: "oc-btn oc-primary", on: { click: () => void this.pick() } }, ds ? "Open…" : "Open data file…"),
-      ds && this.file?.token ? h("button", { class: "oc-btn", title: "Read the file again", on: { click: () => void this.reload() } }, "Reload") : null,
-      ds ? h("span", { class: "oc-source", title: ds.name }, ds.name) : h("span", { class: "oc-source oc-muted" }, "No data source"),
+      h("button", { class: `oc-btn${this.showConnect ? " oc-on" : ""}`, title: "Connect to a URL (REST/JSON/CSV), a Notion database or an SQL database", on: { click: () => { this.showConnect = !this.showConnect; this.renderToolbar(); } } }, "Connect…"),
+      ds && (this.file?.token || this.remote) ? h("button", { class: "oc-btn", title: this.remote ? "Fetch the data again" : "Read the file again", on: { click: () => void this.reload() } }, "Reload") : null,
+      ds ? h("span", { class: "oc-source", title: ds.name }, this.remote ? `${ds.name} (${this.remote.type === "url" ? "URL" : this.remote.type === "notion" ? "Notion" : "SQL"})` : ds.name) : h("span", { class: "oc-source oc-muted" }, "No data source"),
     );
+    clear(this.connectBox);
+    if (this.showConnect) {
+      this.connectBox.appendChild(renderConnectBox({
+        saved: this.settings.remotes ?? [],
+        current: this.remote,
+        onConnect: (spec, secret) => void this.connect(spec, secret),
+        onDelete: (name) => {
+          this.settings.remotes = (this.settings.remotes ?? []).filter((r) => r.name !== name);
+          this.persist();
+          this.renderToolbar();
+        },
+      }, (e) => this.fail(e)));
+    }
+    const versions = this.raw ? detectVersions(this.raw.fields).versions : [];
+    if (ds && versions.length) {
+      this.toolbar.append(
+        h("label", { class: "oc-label", title: "Fields like Name_sv / Name_es are versions of Name; choose which one the document shows" }, "Version"),
+        select([{ value: "", label: `default (${versions[0]})` }, ...versions.map((v) => ({ value: v, label: v }))], this.prefs()?.version ?? "", (v) => this.setVersion(v || null)),
+      );
+    }
     if (ds && this.file && this.encoding) {
       const forced = this.settings.encodings?.[this.file.name] ?? "auto";
       const opts = (Object.keys(ENCODING_LABELS) as EncodingChoice[]).map((k) => ({
@@ -888,6 +1133,7 @@ export class Panel {
       ),
       this.renderPaginateRow(),
       this.showPaginate ? this.renderPaginateBox() : null,
+      this.showScript ? this.renderScript() : null,
       h("div", { class: "oc-row" },
         h("span", { class: "oc-label" }, "Images"),
         h("span", { class: "oc-path", title: this.prefs()?.imageFolder ?? "" }, this.prefs()?.imageFolder ?? (this.file?.path ? "next to the data file" : "no folder chosen")),
@@ -902,7 +1148,33 @@ export class Panel {
     return h("div", { class: "oc-row" },
       h("button", { class: `oc-btn${this.showPaginate ? " oc-on" : ""}`, on: { click: () => { this.showPaginate = !this.showPaginate; this.renderDocBar(); } } }, "Paginate…"),
       h("button", { class: "oc-btn", title: "Export the document as PDF", on: { click: () => void this.exportPdf() } }, "Export PDF…"),
+      h("button", { class: `oc-btn${this.showScript ? " oc-on" : ""}`, title: "Run JavaScript against the data and the document", on: { click: () => { this.showScript = !this.showScript; this.renderDocBar(); } } }, "Script…"),
     );
+  }
+
+  private renderScript(): HTMLElement {
+    const scripts = this.prefs()?.scripts ?? [];
+    return renderScriptBox({
+      scripts,
+      draft: this.scriptDraft,
+      onDraft: (name, code) => (this.scriptDraft = { name, code }),
+      output: this.scriptOutput,
+      onRun: (code) => void this.runUserScript(code),
+      onSave: (name, code) => {
+        const p = this.settingsFor();
+        if (!p) return;
+        p.scripts = [{ name, code }, ...(p.scripts ?? []).filter((x) => x.name !== name)];
+        this.persist();
+        this.renderDocBar();
+      },
+      onDelete: (name) => {
+        const p = this.settingsFor();
+        if (!p) return;
+        p.scripts = (p.scripts ?? []).filter((x) => x.name !== name);
+        this.persist();
+        this.renderDocBar();
+      },
+    });
   }
 
   private renderPaginateBox(): HTMLElement {
@@ -942,6 +1214,14 @@ export class Panel {
             select([{ value: "paragraph", label: "paragraph" }, { value: "tab", label: "tab" }], o.separator, (v) => this.setPagination({ separator: v as PaginationPrefs["separator"] })),
             h("span", { class: "oc-muted", title: "Paragraph styles named OC Heading 1, OC Heading 2… and OC Record are applied when they exist" }, "styles: OC Heading n, OC Record"),
           ),
+      h("div", { class: "oc-row" },
+        h("button", { class: "oc-btn", title: "Point the document's single record at each record in turn and export a PDF for each", on: { click: () => void this.exportPdfPerRecord() } }, "One PDF per record"),
+        h("span", { class: "oc-label" }, "named by"),
+        select((this.source?.fields ?? []).map((f) => ({ value: f.name, label: f.name })), o.nameField ?? this.source?.keyField ?? this.source?.fields[0]?.name ?? "", (v) => this.setPagination({ nameField: v })),
+        this.raw && detectVersions(this.raw.fields).versions.length
+          ? h("button", { class: "oc-btn", title: "Update and export the document once per version", on: { click: () => void this.exportPdfPerVersion() } }, "PDF for each version")
+          : null,
+      ),
       h("div", { class: "oc-row" },
         h("button", { class: "oc-btn oc-primary", on: { click: () => void this.paginate() } }, "Paginate"),
         h("span", { class: "oc-label" }, "PDF preset"),

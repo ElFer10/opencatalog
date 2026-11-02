@@ -6,6 +6,7 @@ import { Host, PickedFile, storageSettings } from "./host";
 /** Browser host; pass a document (e.g. a MemoryDocument) to simulate InDesign. */
 export function createBrowserHost(document_: DocumentAdapter | null = null): Host {
   const cache = new Map<string, PickedFile>();
+  const secrets = new Map<string, string>();
   return {
     kind: "browser",
     pickFile(extensions) {
@@ -41,6 +42,20 @@ export function createBrowserHost(document_: DocumentAdapter | null = null): Hos
         else downloaded.set(u, `/cache/${cacheFileName(u)}`);
       }
       return { downloaded, failed };
+    },
+    async fetch(url, req) {
+      try {
+        const res = await fetch(url, { method: req?.method ?? "GET", headers: req?.headers, body: req?.body });
+        return { status: res.status, text: await res.text() };
+      } catch (e) {
+        return { status: 0, text: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getSecret(name) {
+      return secrets.get(name);
+    },
+    async setSecret(name, value) {
+      secrets.set(name, value);
     },
     async pickSavePath(suggestedName) {
       return `/Users/me/Desktop/${suggestedName}`;
