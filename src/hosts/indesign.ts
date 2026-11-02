@@ -9,6 +9,7 @@
  *
  * The InDesign UXP DOM is synchronous and mirrors the ExtendScript DOM.
  */
+import { Bounds, gridOffsets, retargetEncoded, sampleKeyOf, unionBounds } from "../core/layout";
 import {
   DocumentAdapter,
   FIELD_TAG,
@@ -16,6 +17,7 @@ import {
   LINK_LABEL,
   LinkedItem,
   PlaceResult,
+  RepeatResult,
   STORY_TAG,
   decodeLink,
   encodeLink,
@@ -186,6 +188,32 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
         }
       };
       walk(doc.xmlElements.item(0));
+      // Linked table cells (script labels on cells).
+      const stories = doc.stories;
+      for (let si = 0; si < stories.length; si++) {
+        const tables = stories.item(si).tables;
+        for (let ti = 0; ti < tables.length; ti++) {
+          const cells = tables.item(ti).cells;
+          for (let ci = 0; ci < cells.length; ci++) {
+            const cell = cells.item(ci);
+            let link: FieldLink | null = null;
+            try {
+              link = decodeLink(cell.extractLabel(LINK_LABEL));
+            } catch {
+              link = null;
+            }
+            if (!link) continue;
+            let page: string | undefined;
+            try {
+              const frames = cell.texts.item(0).parentTextFrames;
+              page = frames && frames.length > 0 ? pageName(frames[0]) : undefined;
+            } catch {
+              page = undefined;
+            }
+            out.push({ ref: { node: cell, inline: true }, link, kind: "cell", current: String(cell.contents ?? ""), page });
+          }
+        }
+      }
       return out;
     },
 
@@ -262,6 +290,107 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
       frame.insertLabel(LINK_LABEL, encodeLink(link));
       if (created) app.select(frame);
       return { target: created ? "new-frame" : "graphic-frame" };
+    },
+
+    placeTable(header, rows): PlaceResult {
+      if (rows.length === 0) throw new Error("Nothing to place");
+      const cols = Math.max(...rows.map((r) => r.length), header?.length ?? 0);
+      const s = firstSelection();
+      let ip: any;
+      let created = false;
+      if (s && TEXT_SELECTIONS.has(s.constructorName)) ip = s.insertionPoints.item(0);
+      else if (s && s.constructorName === "TextFrame") {
+        if (decodeLink(s.extractLabel(LINK_LABEL))) throw new Error("This frame is linked to a field; select an empty frame or nothing");
+        ip = s.parentStory.insertionPoints.item(-1);
+      } else if (s) throw new Error("Select a text frame, a text insertion point or nothing to place a table");
+      else {
+        const frame = app.activeWindow.activePage.textFrames.add();
+        frame.geometricBounds = newFrameBounds(Math.min(0.9, 0.05 * (rows.length + 2)), 1);
+        ip = frame.parentStory.insertionPoints.item(0);
+        created = true;
+        app.select(frame);
+      }
+      const table = ip.tables.add();
+      table.columnCount = cols;
+      table.headerRowCount = header ? 1 : 0;
+      table.bodyRowCount = rows.length;
+      const offset = header ? 1 : 0;
+      if (header) header.forEach((h, c) => (table.rows.item(0).cells.item(c).contents = h));
+      rows.forEach((row, r) =>
+        row.forEach((cellData, c) => {
+          const cell = table.rows.item(r + offset).cells.item(c);
+          cell.contents = cellData.text;
+          cell.insertLabel(LINK_LABEL, encodeLink(cellData.link));
+        }),
+      );
+      void created;
+      return { target: "table" };
+    },
+
+    repeatSelection(sourceId, keys, gap): RepeatResult {
+      const sel = (app.selection ?? []).filter((x: any) => x && x.geometricBounds !== undefined && !TEXT_SELECTIONS.has(x.constructorName));
+      if (sel.length === 0) throw new Error("Select the frames (or group) that show one record with the selection tool");
+      // Collect links inside the selection to find the sample record.
+      const links: FieldLink[] = [];
+      const visit = (item: any, fn: (raw: string, set: (v: string) => void) => void) => {
+        const all = [item, ...(item.allPageItems ?? [])];
+        for (const it of all) {
+          try {
+            const raw = it.extractLabel(LINK_LABEL);
+            if (raw) fn(raw, (v) => it.insertLabel(LINK_LABEL, v));
+          } catch {
+            /* not labellable */
+          }
+          if (it.constructorName !== "TextFrame") continue;
+          const story = it.parentStory;
+          const walkXml = (el: any) => {
+            const kids = el.xmlElements;
+            for (let i = 0; i < kids.length; i++) {
+              const k = kids.item(i);
+              if (k.markupTag.name === FIELD_TAG) {
+                const attr = k.xmlAttributes.itemByName(LINK_LABEL);
+                if (valid(attr)) fn(String(attr.value), (v) => (attr.value = v));
+              } else walkXml(k);
+            }
+          };
+          try {
+            const el = story.associatedXMLElement;
+            if (valid(el)) walkXml(el);
+          } catch {
+            /* untagged story */
+          }
+          const tables = story.tables;
+          for (let t = 0; t < tables.length; t++) {
+            const cells = tables.item(t).cells;
+            for (let c = 0; c < cells.length; c++) {
+              const cell = cells.item(c);
+              const raw = cell.extractLabel(LINK_LABEL);
+              if (raw) fn(raw, (v) => cell.insertLabel(LINK_LABEL, v));
+            }
+          }
+        }
+      };
+      for (const item of sel) visit(item, (raw) => { const l = decodeLink(raw); if (l) links.push(l); });
+      const sampleKey = sampleKeyOf(links, sourceId);
+      const targets = keys.filter((k) => k !== sampleKey);
+      const block = unionBounds(sel.map((x: any) => x.geometricBounds as Bounds));
+      const page = sel[0].parentPage;
+      if (!valid(page)) throw new Error("The selection must be on a page, not on the pasteboard");
+      const [y1, x1, y2, x2] = page.bounds as number[];
+      const m = page.marginPreferences;
+      const area: Bounds = [y1! + Number(m.top), x1! + Number(m.left), y2! - Number(m.bottom), x2! - Number(m.right)];
+      const offsets = gridOffsets(block, area, targets.length, gap);
+      const placed: string[] = [];
+      targets.slice(0, offsets.length).forEach((key, i) => {
+        const [dx, dy] = offsets[i]!;
+        for (const item of sel) {
+          const dup = item.duplicate();
+          dup.move(undefined, [dx, dy]);
+          visit(dup, (raw, set) => set(retargetEncoded(raw, key)));
+        }
+        placed.push(key);
+      });
+      return { sampleKey, placed, notPlaced: targets.slice(offsets.length) };
     },
 
     reveal(item) {

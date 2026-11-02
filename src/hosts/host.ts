@@ -24,6 +24,13 @@ export interface Host {
   pickFolder(): Promise<string | null>;
   /** Ask where to save a text file and write it. Resolves false when cancelled. */
   saveTextFile(suggestedName: string, text: string): Promise<boolean>;
+  /** Download image URLs into a local cache. Returns URL → local path, plus failures. */
+  downloadImages(urls: readonly string[]): Promise<DownloadResult>;
+}
+
+export interface DownloadResult {
+  downloaded: Map<string, string>;
+  failed: Map<string, string>;
 }
 
 const SETTINGS_KEY = "opencatalog.settings.v1";

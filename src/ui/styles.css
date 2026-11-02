@@ -19,7 +19,7 @@
 .oc-searchrow { padding: 2px 8px; }
 .oc-search { width: 100%; box-sizing: border-box; }
 .oc-filters, .oc-fields { padding: 0 8px; border-bottom: 1px solid var(--oc-border); }
-.oc-fields { display: flex; flex-wrap: wrap; padding: 4px 8px; }
+.oc-fields { padding: 4px 8px; max-height: 45%; overflow: auto; }
 .oc-fieldtoggle { margin-right: 12px; white-space: nowrap; }
 .oc-btn { padding: 3px 10px; border: 1px solid var(--oc-border); border-radius: 4px; background: transparent; color: var(--oc-fg); cursor: pointer; }
 .oc-btn.oc-primary { background: var(--oc-accent); border-color: var(--oc-accent); color: #fff; }
@@ -59,3 +59,15 @@
 .oc-placed { color: #2d9d78; font-weight: 600; }
 .oc-edited { background: rgba(230, 170, 20, 0.25); }
 .oc-edited-note { color: #b07800; }
+.oc-changed { background: rgba(20, 115, 230, 0.18); }
+.oc-new { background: rgba(45, 157, 120, 0.14); }
+.oc-computed-cell { font-style: italic; }
+.oc-fieldlist { width: 100%; }
+.oc-fieldrow { padding: 1px 0; }
+.oc-fieldname { font-weight: 600; min-width: 90px; }
+.oc-tag { border: 1px solid var(--oc-border); border-radius: 8px; padding: 0 6px; color: var(--oc-muted); font-size: 0.9em; }
+.oc-format { margin: 0 0 6px 22px; padding: 2px 0; border-left: 2px solid var(--oc-accent); }
+.oc-subtitle { font-weight: 600; margin-top: 6px; }
+.oc-expr { width: 260px; font-family: Menlo, Consolas, monospace; }
+.oc-help { font-size: 0.9em; }
+.oc-computed { border-top: 1px solid var(--oc-border); margin-top: 4px; }

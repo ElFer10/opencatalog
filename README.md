@@ -2,8 +2,8 @@
 
 Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP plugin.
 
-> Status: **phase 1 (0.2.0)** — load a data source, place fields in an InDesign document and keep
-> them in sync in both directions.
+> Status: **phase 2 (0.3.0)** — data sources, placing and two-way sync, plus field formats,
+> computed fields, image URLs, linked tables, repeated layouts and change tracking on reload.
 
 ## What works today
 
@@ -43,6 +43,36 @@ All links are stored inside the InDesign document itself; there is no external d
 Links remember the data source name (file name, plus sheet for Excel) and the record key, so keep a
 stable key field (SKU, ID…) for reliable updates.
 
+### Layout tools (phase 2)
+
+- **Field formats** (Fields › Format…): prefix, suffix, text for empty values, UPPER/lower/Title case;
+  for numbers fixed decimals and a thousands separator (space, thin space, point, comma, apostrophe);
+  for dates a pattern such as `DD.MM.YYYY` or `D MMMM YYYY` with a locale for month names (`sv-SE`).
+  The grid shows values as they will appear in the document. Update Panel reverses number formats.
+- **Computed fields** (Fields › Computed fields): a small expression language evaluated per record.
+  ```
+  {Price} * 1.25
+  upper({Product}) & " – " & {Unit}
+  if({Stock} > 0, "In stock", "Sold out")
+  round({Price} * 0.8, 2)      join(", ", {Color}, {Size})
+  ```
+  Operators `+ - * / %`, `&` joins text, `= <> < <= > >=`, `and or not`. Functions: abs, ceil,
+  coalesce, concat, contains, floor, if, isempty, join, left, len, lower, max, mid, min, number,
+  replace, right, round, startswith, text, trim, upper. Computed fields can use earlier computed
+  fields, are placed like any other field and are read-only for Update Panel.
+- **Image URLs**: `http(s)://` values are downloaded into the plugin's image cache and placed from
+  there (once per URL per session; cached files are reused).
+- **Place as table**: one row per selected record, one column per visible text field, optional
+  header row. Every cell stays linked and is refreshed by Update Document.
+- **Repeat layout**: design one product block (frames showing fields of a single record — text,
+  images, tables), select it with the selection tool, select records in the list and click
+  **Repeat layout**. The block is copied in a grid inside the page margins (gap configurable), each
+  copy re-linked to its record and filled. Records that do not fit are reported; flowing onto new
+  pages comes with pagination in phase 3.
+- **Synchronize**: on Reload, the panel compares the new data with the previous load and reports
+  new, changed and deleted records (and added/removed fields). Changed cells are highlighted,
+  **Show: new / changed** filters the list, and placed fields of deleted records are listed.
+
 ## Install in InDesign (development)
 
 Requirements: Node.js 18+, InDesign 2023 (18.5) or later, and Adobe **UXP Developer Tools**
@@ -71,6 +101,7 @@ Double-click a placed field in the simulated page to edit it and try **Update pa
 npm run typecheck   # TypeScript, strict
 npm test            # Vitest unit tests (core + providers)
 npm run check       # all of the above + build
+npm run e2e         # browser end-to-end tests of the preview (needs Playwright + Chromium)
 ```
 
 ```
@@ -89,7 +120,7 @@ test/          unit tests and fixtures
 | --- | --- |
 | 0 — Base | Data sources, panel with search, filters, sort and grouping ✅ |
 | 1 — MVP | Place text and image fields, store links in the document, Update Document / Update Panel, place count and error report ✅ |
-| 2 — Layout | Computed fields, number formats, images from URLs, formatting rules from snippets, tables, synchronize (new/changed/deleted) |
+| 2 — Layout | Computed fields, number formats, images from URLs, repeated layout blocks, linked tables, synchronize (new/changed/deleted) ✅ |
 | 3 — Pagination | Flow and template pagination, then guides, masters and positions; page insertion; PDF export |
 | 4 — Advanced | Local helper for ODBC/SQLite, generic REST connector for PIM/DAM, versions, merged documents, scripting API |
 
@@ -109,7 +140,8 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 ### En español (resumen)
 
 OpenCatalog es una alternativa open source para crear catálogos en InDesign a partir de datos.
-La versión 0.2.0 carga CSV, Excel y JSON, coloca campos de texto e imagen en el documento
-y los mantiene sincronizados (Update document / Update panel), con recuento de colocaciones e informe de errores.
+La versión 0.3.0 carga CSV, Excel y JSON, coloca campos de texto e imagen y los mantiene sincronizados.
+Añade formatos de campo, campos calculados con expresiones, imágenes desde URL, tablas vinculadas,
+repetición de un bloque de producto por registro y detección de registros nuevos, cambiados y borrados.
 Para probarla: `npm install && npm run build`, luego en UXP Developer Tools → *Add Plugin* →
 `dist/plugin/manifest.json` → *Load*.

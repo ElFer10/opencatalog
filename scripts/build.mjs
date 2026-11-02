@@ -44,16 +44,19 @@ body { display: flex; flex-direction: column; }
 #app { width: 58%; height: 100%; border-right: 1px solid #ccc; }
 #doc { flex: 1; overflow: auto; font: 12px system-ui; background: #e8e8e8; }
 .pv-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: #fafafa; border-bottom: 1px solid #ccc; }
-.pv-page { margin: 12px; padding: 16px; background: #fff; min-height: 400px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
-.pv-frame { border: 1px dashed #9ab; margin-bottom: 10px; padding: 4px 6px; cursor: pointer; }
+.pv-page { position: relative; margin: 12px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+.pv-margins { position: absolute; border: 1px solid #e4b4f0; pointer-events: none; }
+.pv-frame { position: absolute; box-sizing: border-box; border: 1px dashed #9ab; padding: 2px 4px; cursor: pointer; background: rgba(255,255,255,.85); overflow: hidden; }
+.pv-table { border-collapse: collapse; font: 11px Georgia, serif; width: 100%; }
+.pv-table td, .pv-table th { border: 1px solid #bbb; padding: 1px 3px; text-align: left; }
 .pv-frame.pv-linked { border-style: solid; }
 .pv-frame.pv-sel { outline: 2px solid #1473e6; }
 .pv-frame-head { font-size: 10.5px; color: #666; display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }
 .pv-badge { background: #e3f0ff; color: #1473e6; border-radius: 3px; padding: 0 4px; }
 .pv-mini { font-size: 10px; padding: 0 4px; }
-.pv-text { white-space: pre-wrap; font: 14px Georgia, serif; }
+.pv-text { white-space: pre-wrap; font: 12px Georgia, serif; }
 .pv-field { background: #e3f0ff; border-bottom: 1px solid #1473e6; }
-.pv-img { padding: 18px; text-align: center; background: #f2f2f2; color: #555; }
+.pv-img { padding: 8px; text-align: center; background: #f2f2f2; color: #555; font-size: 10px; word-break: break-all; }
 .pv-muted { color: #888; }
 </style>`,
     ).replace('<div id="app"></div>', '<div class="pv-wrap"><div id="app"></div><div id="doc"></div></div>'),

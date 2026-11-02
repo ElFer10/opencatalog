@@ -2,7 +2,8 @@
  * Host adapter for Adobe UXP (InDesign). `require("uxp")` is provided by the UXP runtime;
  * the bundler leaves it as an external.
  */
-import { Host, PickedFile, storageSettings } from "./host";
+import { cacheFileName } from "../core/images";
+import { DownloadResult, Host, PickedFile, storageSettings } from "./host";
 import { activeInDesignDocument } from "./indesign";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -45,6 +46,39 @@ export function createUxpHost(): Host {
     async pickFolder() {
       const folder = await fs.getFolder();
       return folder ? String(folder.nativePath) : null;
+    },
+    async downloadImages(urls): Promise<DownloadResult> {
+      const result: DownloadResult = { downloaded: new Map(), failed: new Map() };
+      if (urls.length === 0) return result;
+      const data = await fs.getDataFolder();
+      let cache: any;
+      try {
+        cache = await data.getEntry("image-cache");
+      } catch {
+        cache = await data.createFolder("image-cache");
+      }
+      for (const url of urls) {
+        const name = cacheFileName(url);
+        try {
+          let file: any = null;
+          try {
+            file = await cache.getEntry(name);
+          } catch {
+            file = null;
+          }
+          if (!file) {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const bytes = await res.arrayBuffer();
+            file = await cache.createFile(name, { overwrite: true });
+            await file.write(bytes, { format: formats.binary });
+          }
+          result.downloaded.set(url, String(file.nativePath));
+        } catch (e) {
+          result.failed.set(url, e instanceof Error ? e.message : String(e));
+        }
+      }
+      return result;
     },
     async saveTextFile(suggestedName, text) {
       const file = await fs.getFileForSaving(suggestedName, { types: [suggestedName.split(".").pop() ?? "csv"] });

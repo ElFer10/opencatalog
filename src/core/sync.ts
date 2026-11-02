@@ -4,7 +4,8 @@
  */
 import { ImageContext, resolveImage, samePath } from "./images";
 import type { DocumentAdapter, LinkedItem } from "./links";
-import { DataSource, Value, formatForDocument, formatValue, getRecord, parseFromDocument, setRecordValue } from "./model";
+import { formatFieldValue, parseFieldText } from "./format";
+import { DataSource, Value, formatValue, getRecord, setRecordValue } from "./model";
 
 export interface SourceContext {
   source: DataSource;
@@ -54,7 +55,8 @@ export function planUpdateDocument<Ref>(
       plan.errors.push({ item, message: `Record "${item.link.key}" no longer exists in ${source.name}` });
       continue;
     }
-    if (!source.fields.some((f) => f.name === item.link.field)) {
+    const fieldDef = source.fields.find((f) => f.name === item.link.field);
+    if (!fieldDef) {
       plan.errors.push({ item, message: `Field "${item.link.field}" no longer exists in ${source.name}` });
       continue;
     }
@@ -69,7 +71,7 @@ export function planUpdateDocument<Ref>(
       else plan.changes.push({ item, value: res.path });
       continue;
     }
-    const text = formatForDocument(value, source);
+    const text = formatFieldValue(value, fieldDef, source);
     if (normalizeText(item.current) === normalizeText(text)) plan.unchanged++;
     else plan.changes.push({ item, value: text });
   }
@@ -126,22 +128,26 @@ export interface PanelPlan<Ref = unknown> {
 export function planUpdatePanel<Ref>(items: readonly LinkedItem<Ref>[], source: DataSource, scope: UpdateScope = {}): PanelPlan<Ref> {
   const plan: PanelPlan<Ref> = { edits: [], conflicts: [], unchanged: 0 };
   const byCell = new Map<string, PanelEdit<Ref>>();
-  const types = new Map(source.fields.map((f) => [f.name, f.type] as const));
+  const defs = new Map(source.fields.map((f) => [f.name, f] as const));
   for (const item of items) {
     if (item.link.source !== source.id || item.kind === "image") continue;
     if (scope.keys && !scope.keys.has(item.link.key)) continue;
     const record = getRecord(source, item.link.key);
-    const type = types.get(item.link.field);
-    if (!record || !type) continue; // reported by Update Document
+    const def = defs.get(item.link.field);
+    if (!record || !def) continue; // reported by Update Document
     const current = normalizeText(item.current);
-    const dataText = normalizeText(formatForDocument(record.values[item.link.field], source));
+    const dataText = normalizeText(formatFieldValue(record.values[item.link.field], def, source));
     if (current === dataText) {
       plan.unchanged++;
       continue;
     }
-    const parsed = parseFromDocument(current, type, source);
+    if (def.expression) {
+      plan.conflicts.push({ item, message: `${item.link.key} · ${item.link.field} is a computed field and cannot be edited in the document` });
+      continue;
+    }
+    const parsed = parseFieldText(current, def, source);
     if (parsed === undefined) {
-      plan.conflicts.push({ item, message: `"${current}" is not a valid ${type} for ${item.link.key} · ${item.link.field}` });
+      plan.conflicts.push({ item, message: `"${current}" is not a valid ${def.type} for ${item.link.key} · ${item.link.field}` });
       continue;
     }
     const cell = `${item.link.key}\u001f${item.link.field}`;
@@ -170,4 +176,16 @@ export function placeCounts(items: readonly LinkedItem[], sourceId: string): Map
   const counts = new Map<string, number>();
   for (const i of items) if (i.link.source === sourceId) counts.set(i.link.key, (counts.get(i.link.key) ?? 0) + 1);
   return counts;
+}
+
+/** Image URLs that Update Document or placing will need for the given links. */
+export function imageUrlsFor(items: readonly LinkedItem[], contexts: ReadonlyMap<string, SourceContext>): string[] {
+  const urls = new Set<string>();
+  for (const i of items) {
+    if (i.kind !== "image") continue;
+    const ctx = contexts.get(i.link.source);
+    const v = ctx ? getRecord(ctx.source, i.link.key)?.values[i.link.field] : undefined;
+    if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) urls.add(v.trim());
+  }
+  return [...urls];
 }

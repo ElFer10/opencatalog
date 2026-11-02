@@ -1,8 +1,10 @@
 /**
  * An in-memory stand-in for an InDesign document. Used by the unit tests and by the browser
  * preview, and follows the same placement rules as the InDesign adapter.
+ * Units are millimetres on a single A4 page with 12 mm margins.
  */
-import { DocumentAdapter, FieldLink, LinkedItem, PlaceResult, decodeLink, encodeLink } from "../core/links";
+import { Bounds, gridOffsets, retargetEncoded, sampleKeyOf, unionBounds } from "../core/layout";
+import { DocumentAdapter, FieldLink, LinkedItem, PlaceResult, RepeatResult, decodeLink, encodeLink } from "../core/links";
 
 export interface Run {
   text: string;
@@ -10,19 +12,29 @@ export interface Run {
   link?: string;
 }
 
+export interface MemTable {
+  header: string[] | null;
+  rows: Run[][];
+}
+
 export interface MemFrame {
   id: number;
-  kind: "text" | "graphic";
+  kind: "text" | "graphic" | "table";
   page: string;
+  bounds: Bounds;
   /** Frame-level link label. */
   label?: string;
   runs: Run[];
   image?: string;
+  table?: MemTable;
 }
 
-export type MemSelection = { frameId: number; offset?: number } | null;
+export type MemSelection = { frameId: number; offset?: number; more?: number[] } | null;
 
-export type MemRef = { frameId: number; run?: number };
+export type MemRef = { frameId: number; run?: number; row?: number; col?: number };
+
+export const PAGE: Bounds = [0, 0, 297, 210];
+export const MARGINS: Bounds = [12, 12, 285, 198];
 
 export class MemoryDocument implements DocumentAdapter<MemRef> {
   frames: MemFrame[] = [];
@@ -35,8 +47,16 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
 
   constructor(readonly name = "Untitled-1") {}
 
-  addFrame(kind: "text" | "graphic", text = "", page = "1"): MemFrame {
-    const f: MemFrame = { id: this.nextId++, kind, page, runs: text ? [{ text }] : [] };
+  /** Next free spot down the left margin for a new frame. */
+  private nextBounds(height: number, width = 90): Bounds {
+    const bottom = this.frames.reduce((m, f) => Math.max(m, f.bounds[2]), MARGINS[0] - 4);
+    const top = bottom + 4;
+    return [top, MARGINS[1], top + height, MARGINS[1] + width];
+  }
+
+  addFrame(kind: "text" | "graphic" | "table", text = "", page = "1", bounds?: Bounds): MemFrame {
+    const b = bounds ?? this.nextBounds(kind === "graphic" ? 40 : kind === "table" ? 50 : 18);
+    const f: MemFrame = { id: this.nextId++, kind, page, bounds: b, runs: text ? [{ text }] : [] };
     this.frames.push(f);
     this.onChange();
     return f;
@@ -46,6 +66,12 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
     const f = this.frames.find((x) => x.id === id);
     if (!f) throw new Error(`Frame ${id} not found`);
     return f;
+  }
+
+  selectedFrames(): MemFrame[] {
+    const s = this.selection;
+    if (!s) return [];
+    return [s.frameId, ...(s.more ?? [])].map((id) => this.frame(id));
   }
 
   static storyText(f: MemFrame): string {
@@ -64,6 +90,12 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
         const link = decodeLink(r.link);
         if (link) out.push({ ref: { frameId: f.id, run: i }, link, kind: "inline-text", current: r.text, page: f.page });
       });
+      f.table?.rows.forEach((row, ri) =>
+        row.forEach((cell, ci) => {
+          const link = decodeLink(cell.link);
+          if (link) out.push({ ref: { frameId: f.id, row: ri, col: ci }, link, kind: "cell", current: cell.text, page: f.page });
+        }),
+      );
     }
     return out;
   }
@@ -76,11 +108,16 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
 
   setText(item: LinkedItem<MemRef>, text: string): void {
     const f = this.frame(item.ref.frameId);
-    if (item.ref.run === undefined) f.runs = [{ text }];
+    const { run, row, col } = item.ref;
+    if (row !== undefined && col !== undefined) {
+      const cell = f.table?.rows[row]?.[col];
+      if (!cell) throw new Error("Linked cell no longer exists");
+      cell.text = text;
+    } else if (run === undefined) f.runs = [{ text }];
     else {
-      const run = f.runs[item.ref.run];
-      if (!run) throw new Error("Linked text no longer exists");
-      run.text = text;
+      const r = f.runs[run];
+      if (!r) throw new Error("Linked text no longer exists");
+      r.text = text;
     }
   }
 
@@ -114,7 +151,7 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
       }
       result = { target: "text-frame" };
     } else {
-      const f = this.addFrame("text");
+      const f = this.addFrame("text", "", "1", this.nextBounds(fields.length > 1 ? 8 + 6 * fields.length : 12));
       if (fields.length === 1) {
         f.runs = [{ text: fields[0]!.text }];
         f.label = encodeLink(fields[0]!.link);
@@ -142,12 +179,57 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
     return { target: created ? "new-frame" : "graphic-frame" };
   }
 
+  placeTable(header: string[] | null, rows: { link: FieldLink; text: string }[][]): PlaceResult {
+    if (rows.length === 0) throw new Error("Nothing to place");
+    const sel = this.selection;
+    let f = sel ? this.frame(sel.frameId) : null;
+    if (f && (f.kind !== "text" || f.label || f.runs.length > 0)) throw new Error("Select an empty text frame, or nothing, to place a table");
+    if (!f) f = this.addFrame("table", "", "1", this.nextBounds(8 + 7 * (rows.length + (header ? 1 : 0)), MARGINS[3] - MARGINS[1]));
+    f.kind = "table";
+    f.table = { header, rows: rows.map((r) => r.map((c) => ({ text: c.text, link: encodeLink(c.link) }))) };
+    this.selection = { frameId: f.id };
+    this.onChange();
+    return { target: "table" };
+  }
+
+  repeatSelection(sourceId: string, keys: string[], gap: number): RepeatResult {
+    const frames = this.selectedFrames();
+    if (frames.length === 0) throw new Error("Select the frames that show one record first");
+    const links: FieldLink[] = [];
+    for (const f of frames) {
+      const l = decodeLink(f.label);
+      if (l) links.push(l);
+      for (const r of f.runs) { const x = decodeLink(r.link); if (x) links.push(x); }
+      for (const row of f.table?.rows ?? []) for (const c of row) { const x = decodeLink(c.link); if (x) links.push(x); }
+    }
+    const sampleKey = sampleKeyOf(links, sourceId);
+    const targets = keys.filter((k) => k !== sampleKey);
+    const block = unionBounds(frames.map((f) => f.bounds));
+    const offsets = gridOffsets(block, MARGINS, targets.length, gap);
+    const placed: string[] = [];
+    targets.slice(0, offsets.length).forEach((key, i) => {
+      const [dx, dy] = offsets[i]!;
+      for (const f of frames) {
+        const copy: MemFrame = JSON.parse(JSON.stringify(f));
+        copy.id = this.nextId++;
+        copy.bounds = [f.bounds[0] + dy, f.bounds[1] + dx, f.bounds[2] + dy, f.bounds[3] + dx];
+        if (copy.label) copy.label = retargetEncoded(copy.label, key);
+        copy.runs = copy.runs.map((r) => (r.link ? { ...r, link: retargetEncoded(r.link, key) } : r));
+        if (copy.table) copy.table.rows = copy.table.rows.map((row) => row.map((c) => (c.link ? { ...c, link: retargetEncoded(c.link, key) } : c)));
+        this.frames.push(copy);
+      }
+      placed.push(key);
+    });
+    this.onChange();
+    return { sampleKey, placed, notPlaced: targets.slice(offsets.length) };
+  }
+
   reveal(item: LinkedItem<MemRef>): void {
     this.selection = { frameId: item.ref.frameId };
     this.onChange();
   }
 
-  /** Simulate a user typing over a linked inline field or frame. */
+  /** Simulate a user typing over a linked field, frame or cell. */
   editText(ref: MemRef, text: string): void {
     this.setText({ ref, link: { source: "", key: "", field: "" }, kind: "inline-text", current: "" }, text);
     this.onChange();

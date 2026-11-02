@@ -1,4 +1,4 @@
-# InDesign test checklist (phase 1)
+# InDesign test checklist (phases 1–2)
 
 The core is unit-tested and the panel is tested in the browser preview, but the InDesign
 adapter (`src/hosts/indesign.ts`) can only be verified inside InDesign. Run through this list
@@ -28,3 +28,19 @@ Use the demo CSV from `test/fixtures/productos-eu.csv` or any small file with a 
 10. **Theme** — Switch InDesign between light and dark interface; text stays readable.
 
 If something fails, open UXP Developer Tools › *Debug* for the plugin and copy the console error.
+
+## Phase 2
+
+11. **Formats** — Give `Price` 2 decimals, a space as thousands separator and suffix ` kr`; Update
+    document. Placed prices change to e.g. `1 299,50 kr`.
+12. **Computed field** — Add `Label = upper({Product}) & " – " & {Unit}`, place it, change a product
+    name in the data, Reload, Update document.
+13. **Image URL** — Use a field with an `https://` image address and **Place image**. The first time,
+    InDesign may ask to allow network access for the plugin.
+14. **Table** — Select 3 records, **Place as table** with nothing selected. Edit the data, Reload,
+    Update document: the cells change and the table keeps its formatting.
+15. **Repeat layout** — Build a block (name frame + image frame) for one record, select both frames
+    with the selection tool, select 4 records, **Repeat layout**. Copies appear in a grid, filled
+    with each record's data; Edit › Undo removes them in one step.
+16. **Synchronize** — Add, change and delete rows in the data file, Reload. The status line counts
+    them, changed cells are highlighted, and placed fields of deleted rows are listed in the report.

@@ -3,3 +3,8 @@ export * from "./query";
 export * from "./links";
 export * from "./images";
 export * from "./sync";
+export * from "./format";
+export * from "./expr";
+export * from "./computed";
+export * from "./diff";
+export * from "./layout";

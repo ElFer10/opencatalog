@@ -7,9 +7,29 @@ export type FieldType = "text" | "number" | "date" | "boolean" | "image";
 
 export type Value = string | number | boolean | null;
 
+/** How a field's value is written into the document. All options are optional. */
+export interface FieldFormat {
+  prefix?: string;
+  suffix?: string;
+  /** Text written when the value is empty (prefix/suffix are not added). */
+  empty?: string;
+  case?: "upper" | "lower" | "title";
+  /** Numbers: fixed number of decimals. */
+  decimals?: number;
+  /** Numbers: thousands separator ("" = none). */
+  thousands?: string;
+  /** Dates: pattern with YYYY, YY, MMMM, MMM, MM, M, DD, D, HH, mm. */
+  date?: string;
+  /** Locale for month names, e.g. "sv-SE", "es-ES". */
+  locale?: string;
+}
+
 export interface FieldDef {
   name: string;
   type: FieldType;
+  format?: FieldFormat;
+  /** Computed fields: the expression that produces the value. */
+  expression?: string;
 }
 
 export interface DataRecord {

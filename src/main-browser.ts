@@ -4,7 +4,7 @@
  */
 import { decodeLink } from "./core/links";
 import { createBrowserHost } from "./hosts/browser";
-import { MemFrame, MemoryDocument } from "./hosts/memory-document";
+import { MemFrame, MemoryDocument, PAGE } from "./hosts/memory-document";
 import { h, clear } from "./ui/dom";
 import { Panel } from "./ui/panel";
 
@@ -13,11 +13,32 @@ const root = document.getElementById("app")!;
 const panel = new Panel(root, createBrowserHost(doc));
 const docRoot = document.getElementById("doc")!;
 
+const SCALE = 2.4; // px per mm
+
+function isSelected(id: number): boolean {
+  const s = doc.selection;
+  return !!s && (s.frameId === id || (s.more ?? []).includes(id));
+}
+
+function renderTable(f: MemFrame): HTMLElement {
+  const t = f.table;
+  if (!t) return h("div", { class: "pv-muted" }, "(empty table)");
+  return h("table", { class: "pv-table" },
+    t.header ? h("tr", {}, ...t.header.map((c) => h("th", {}, c))) : null,
+    ...t.rows.map((row) => h("tr", {}, ...row.map((c) => {
+      const link = decodeLink(c.link);
+      return h("td", { class: link ? "pv-field" : "", title: link ? `${link.key} · ${link.field}` : "" }, c.text.replace(/\r/g, "\n"));
+    }))),
+  );
+}
+
 function renderFrame(f: MemFrame): HTMLElement {
-  const selected = doc.selection?.frameId === f.id;
+  const selected = isSelected(f.id);
   const frameLink = decodeLink(f.label);
   const body =
-    f.kind === "graphic"
+    f.kind === "table"
+      ? renderTable(f)
+      : f.kind === "graphic"
       ? h("div", { class: "pv-img" }, f.image ? `🖼 ${f.image}` : "(empty graphic frame)")
       : h("div", { class: "pv-text" },
           ...f.runs.map((r, i) => {
@@ -36,13 +57,25 @@ function renderFrame(f: MemFrame): HTMLElement {
           }),
           f.runs.length === 0 ? h("span", { class: "pv-muted" }, "(empty text frame)") : null,
         );
+  const [top, left, bottom, right] = f.bounds;
   return h("div", {
     class: `pv-frame${selected ? " pv-sel" : ""}${frameLink ? " pv-linked" : ""}`,
     "data-frame": String(f.id),
-    on: { click: () => { doc.selection = { frameId: f.id }; renderDoc(); } },
+    style: `top:${top * SCALE}px;left:${left * SCALE}px;width:${(right - left) * SCALE}px;min-height:${(bottom - top) * SCALE}px`,
+    title: "Click to select, Shift+click to add to the selection",
+    on: { click: (e) => {
+      const s = doc.selection;
+      if ((e as MouseEvent).shiftKey && s && s.frameId !== f.id) {
+        const more = new Set(s.more ?? []);
+        if (more.has(f.id)) more.delete(f.id);
+        else more.add(f.id);
+        doc.selection = { frameId: s.frameId, more: [...more] };
+      } else doc.selection = { frameId: f.id };
+      renderDoc();
+    } },
   },
     h("div", { class: "pv-frame-head" },
-      `${f.kind === "graphic" ? "Graphic" : "Text"} frame ${f.id}`,
+      `${f.kind === "graphic" ? "Graphic" : f.kind === "table" ? "Table" : "Text"} ${f.id}`,
       frameLink ? h("span", { class: "pv-badge" }, `linked: ${frameLink.key} · ${frameLink.field}`) : null,
       f.kind === "text" && !frameLink
         ? h("button", { class: "pv-mini", title: "Put the text cursor at the end of this frame", on: { click: (e) => {
@@ -65,9 +98,12 @@ function renderDoc(): void {
       h("button", { on: { click: () => { const f = doc.addFrame("text", "Price: "); doc.selection = { frameId: f.id, offset: 7 }; renderDoc(); } } }, "+ Text frame"),
       h("button", { on: { click: () => { const f = doc.addFrame("graphic"); doc.selection = { frameId: f.id }; renderDoc(); } } }, "+ Graphic frame"),
       h("button", { on: { click: () => { doc.selection = null; renderDoc(); } } }, "Deselect"),
-      h("span", { class: "pv-muted" }, sel ? (sel.offset !== undefined ? `Cursor in frame ${sel.frameId}` : `Frame ${sel.frameId} selected`) : "Nothing selected"),
+      h("span", { class: "pv-muted" }, sel ? (sel.offset !== undefined ? `Cursor in frame ${sel.frameId}` : `${1 + (sel.more?.length ?? 0)} selected`) : "Nothing selected"),
     ),
-    h("div", { class: "pv-page" }, ...doc.frames.map(renderFrame), doc.frames.length === 0 ? h("p", { class: "pv-muted" }, "Empty page. Place a field from the panel, or add a frame.") : null),
+    h("div", { class: "pv-page", style: `width:${PAGE[3] * SCALE}px;height:${PAGE[2] * SCALE}px` },
+      h("div", { class: "pv-margins", style: `top:${12 * SCALE}px;left:${12 * SCALE}px;right:${12 * SCALE}px;bottom:${12 * SCALE}px` }),
+      ...doc.frames.map(renderFrame),
+      doc.frames.length === 0 ? h("p", { class: "pv-muted", style: "position:absolute;top:40px;left:40px" }, "Empty page. Place a field from the panel, or add a frame.") : null),
   );
 }
 
@@ -77,7 +113,7 @@ renderDoc();
 // Demo data so the preview can be tried without a file.
 const demo = [
   "SKU;Product;Category;Subcategory;Price;Unit;Image",
-  "A-001;Ground coffee;Drinks;Coffee;4,95;500 g;coffee.jpg",
+  "A-001;Ground coffee;Drinks;Coffee;4,95;500 g;https://images.example.com/coffee.jpg",
   "A-002;Espresso beans;Drinks;Coffee;7,50;1 kg;espresso.jpg",
   "A-010;Green tea;Drinks;Tea;3,50;100 g;green-tea.jpg",
   "A-011;Rooibos;Drinks;Tea;3,20;100 g;rooibos.jpg",

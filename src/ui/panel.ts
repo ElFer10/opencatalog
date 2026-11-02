@@ -5,8 +5,18 @@
  *          placement counts and an error report.
  */
 import {
+  ComputedDef,
+  ComputedError,
   DataSource,
   DisplayRow,
+  FieldFormat,
+  FieldSettings,
+  SourceDiff,
+  applyFieldSettings,
+  diffSources,
+  formatFieldValue,
+  imageUrlsFor,
+  isEmptyDiff,
   DocumentAdapter,
   FILTER_OPS,
   Filter,
@@ -24,7 +34,6 @@ import {
   dirname,
   emptyView,
   flattenView,
-  formatForDocument,
   formatValue,
   getRecord,
   placeCounts,
@@ -37,11 +46,12 @@ import {
 import type { Host, PickedFile } from "../hosts/host";
 import { SUPPORTED_EXTENSIONS, loadFromBytes, toCsv } from "../providers";
 import { add, clear, h, select } from "./dom";
+import { renderFieldsEditor } from "./fields-editor";
 
 const PAGE = 300;
 const COL_WIDTH = 132;
 
-type PlacedFilter = "all" | "placed" | "unplaced";
+type PlacedFilter = "all" | "placed" | "unplaced" | "new" | "changed";
 
 interface SourcePrefs {
   view: ViewSpec;
@@ -49,6 +59,11 @@ interface SourcePrefs {
   keyField?: string | null;
   decimalSeparator?: "." | ",";
   imageFolder?: string;
+  formats?: Record<string, FieldFormat>;
+  computed?: ComputedDef[];
+  /** Gap between repeated layout blocks, in document units. */
+  gap?: number;
+  tableHeader?: boolean;
 }
 
 interface Settings {
@@ -71,7 +86,14 @@ const cellKey = (id: string, field: string) => `${id}\u001f${field}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export class Panel {
+  /** The source as loaded (plus key, decimal and Update Panel edits), before computed fields. */
+  private raw: DataSource | null = null;
+  /** `raw` with formats and computed fields applied: what the panel shows and places. */
   private source: DataSource | null = null;
+  private computedErrors: ComputedError[] = [];
+  private diff: SourceDiff | null = null;
+  private downloaded = new Map<string, string>();
+  private editingFormat: string | null = null;
   private file: PickedFile | null = null;
   private sheets: string[] = [];
   private sheet: string | undefined;
@@ -166,7 +188,11 @@ export class Panel {
         }
       }
       if (prefs?.decimalSeparator) ds = { ...ds, decimalSeparator: prefs.decimalSeparator };
-      this.source = ds;
+      const previous = this.raw && this.raw.id === ds.id ? this.raw : null;
+      this.diff = previous ? diffSources(previous, ds) : null;
+      if (this.diff && isEmptyDiff(this.diff)) this.diff = null;
+      this.raw = ds;
+      this.rebuild();
       this.edited.clear();
       if (!keepState) {
         this.view = prefs?.view ?? emptyView();
@@ -178,8 +204,13 @@ export class Panel {
         this.placedFilter = "all";
         this.searchInput.value = this.view.search;
         this.message = null;
-      } else if (!this.message) this.message = { text: `Reloaded ${plural(ds.records.length, "record")}.`, error: false };
+      } else {
+        const prefix = this.message?.text.startsWith("Reloading discarded") ? `${this.message.text} ` : "";
+        this.message = { text: `${prefix}Reloaded ${plural(ds.records.length, "record")}.${this.diffSummary()}`, error: false };
+      }
+      if (keepState && this.diff?.removed.length) this.reportRemoved(this.diff.removed);
       for (const id of [...this.selected]) if (!getRecord(ds, id)) this.selected.delete(id);
+      if (!keepState) this.diff = null;
       this.limit = PAGE;
       if (file.token) this.settings.last = { token: file.token, name: file.name, sheet: this.sheet };
       this.persist();
@@ -193,15 +224,58 @@ export class Panel {
     return this.source ? this.settings.sources[this.source.id] : undefined;
   }
 
+  /** Re-apply formats and computed fields on top of the raw source. */
+  private rebuild(): void {
+    if (!this.raw) return;
+    const prefs = this.prefs();
+    const settings: FieldSettings = { formats: prefs?.formats, computed: prefs?.computed };
+    const { source, errors } = applyFieldSettings(this.raw, settings);
+    this.source = source;
+    this.computedErrors = errors;
+  }
+
+  private settingsFor(): SourcePrefs | undefined {
+    if (!this.raw) return undefined;
+    const id = this.raw.id;
+    this.settings.sources[id] ??= { view: this.view, hidden: [...this.hidden] };
+    return this.settings.sources[id];
+  }
+
+  private diffSummary(): string {
+    const d = this.diff;
+    if (!d) return " No changes.";
+    const parts: string[] = [];
+    if (d.added.length) parts.push(`${d.added.length} new`);
+    if (d.changed.size) parts.push(`${d.changed.size} changed`);
+    if (d.removed.length) parts.push(`${d.removed.length} deleted`);
+    if (d.addedFields.length) parts.push(`new fields: ${d.addedFields.join(", ")}`);
+    if (d.removedFields.length) parts.push(`removed fields: ${d.removedFields.join(", ")}`);
+    return ` ${parts.join(", ")}.`;
+  }
+
+  /** After a reload, list deleted records that are still placed in the document. */
+  private reportRemoved(removed: string[]): void {
+    const doc = this.host.getDocument();
+    if (!doc || !this.source) return;
+    try {
+      const gone = new Set(removed);
+      const issues = doc.scan().filter((i) => i.link.source === this.source!.id && gone.has(i.link.key))
+        .map((item) => ({ item, message: `Record "${item.link.key}" was deleted from the data but is still placed (${item.link.field})` }));
+      if (issues.length) this.report = { title: `Synchronize: ${plural(issues.length, "placed field")} of deleted records.`, ok: false, issues };
+    } catch {
+      /* report is best effort */
+    }
+  }
+
   private persist(): void {
-    if (this.source) {
-      const old = this.settings.sources[this.source.id];
-      this.settings.sources[this.source.id] = {
+    if (this.raw) {
+      const old = this.settings.sources[this.raw.id];
+      this.settings.sources[this.raw.id] = {
         ...old,
         view: this.view,
         hidden: [...this.hidden],
-        keyField: this.source.keyField,
-        decimalSeparator: this.source.decimalSeparator,
+        keyField: this.raw.keyField,
+        decimalSeparator: this.raw.decimalSeparator,
       };
     }
     this.host.saveSettings(this.settings);
@@ -273,7 +347,11 @@ export class Panel {
     if (this.source) {
       m.set(this.source.id, {
         source: this.source,
-        images: { imageFolder: this.prefs()?.imageFolder, dataFolder: this.file?.path ? dirname(this.file.path) : undefined },
+        images: {
+          imageFolder: this.prefs()?.imageFolder,
+          dataFolder: this.file?.path ? dirname(this.file.path) : undefined,
+          downloaded: this.downloaded,
+        },
       });
     }
     return m;
@@ -288,8 +366,23 @@ export class Panel {
     return [...inView, ...rest];
   }
 
+  private fieldText(ds: DataSource, id: string, field: string): string {
+    const def = ds.fields.find((f) => f.name === field);
+    return toDocumentText(formatFieldValue(getRecord(ds, id)?.values[field], def, ds));
+  }
+
+  /** Download image URLs not yet in the session cache; returns failures as messages. */
+  private async ensureDownloaded(urls: string[]): Promise<Map<string, string>> {
+    const missing = urls.filter((u) => !this.downloaded.has(u));
+    if (missing.length === 0) return new Map();
+    this.info(`Downloading ${plural(missing.length, "image")}…`);
+    const res = await this.host.downloadImages(missing);
+    for (const [u, path] of res.downloaded) this.downloaded.set(u, path);
+    return res.failed;
+  }
+
   /** Place one field (or all visible fields) of the selected records at the document selection. */
-  placeFields(fields: string[]): void {
+  async placeFields(fields: string[]): Promise<void> {
     const ds = this.source;
     const doc = this.requireDocument();
     if (!ds || !doc) return;
@@ -300,7 +393,9 @@ export class Panel {
       if (fields.length === 1 && types.get(fields[0]!) === "image") {
         const field = fields[0]!;
         const id = ids[0]!;
-        const res = resolveImage(formatValue(getRecord(ds, id)?.values[field]), this.contexts().get(ds.id)!.images);
+        const value = formatValue(getRecord(ds, id)?.values[field]).trim();
+        if (/^https?:\/\//i.test(value)) await this.ensureDownloaded([value]);
+        const res = resolveImage(value, this.contexts().get(ds.id)!.images);
         if (!res.ok) return this.fail(new Error(`${id} · ${field}: ${res.error}`));
         let target = "";
         doc.transaction("OpenCatalog: Place image", () => {
@@ -309,18 +404,55 @@ export class Panel {
         this.afterPlace(`Placed image ${id} · ${field}${target === "new-frame" ? " in a new frame" : ""}.`, ids.length > 1 ? " Only the first selected record is placed for image fields." : "");
         return;
       }
-      const items = ids.flatMap((id) =>
-        fields.map((field) => ({
-          link: { source: ds.id, key: id, field },
-          text: toDocumentText(formatForDocument(getRecord(ds, id)?.values[field], ds)),
-        })),
-      );
+      const items = ids.flatMap((id) => fields.map((field) => ({ link: { source: ds.id, key: id, field }, text: this.fieldText(ds, id, field) })));
       let target = "";
       doc.transaction("OpenCatalog: Place fields", () => {
         target = doc.placeText(items).target;
       });
       const where = target === "new-frame" ? " in a new text frame" : target === "text-frame" ? " in the selected frame" : "";
       this.afterPlace(`Placed ${plural(items.length, "field")}${where}.`, "");
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** One table row per selected record, one column per visible text field. */
+  placeTable(): void {
+    const ds = this.source;
+    const doc = this.requireDocument();
+    if (!ds || !doc) return;
+    const ids = this.selectedRecords();
+    if (ids.length === 0) return this.fail(new Error("Select the records for the table rows first."));
+    const cols = ds.fields.filter((f) => !this.hidden.has(f.name) && f.type !== "image").map((f) => f.name);
+    const header = this.prefs()?.tableHeader === false ? null : cols;
+    try {
+      const rows = ids.map((id) => cols.map((field) => ({ link: { source: ds.id, key: id, field }, text: this.fieldText(ds, id, field) })));
+      doc.transaction("OpenCatalog: Place table", () => {
+        doc.placeTable(header, rows);
+      });
+      this.afterPlace(`Placed a table with ${plural(ids.length, "row")} and ${plural(cols.length, "column")}.`, "");
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  /** Repeat the selected layout block (showing one record) for every selected record, then update. */
+  async repeatLayout(): Promise<void> {
+    const ds = this.source;
+    const doc = this.requireDocument();
+    if (!ds || !doc) return;
+    const ids = this.selectedRecords();
+    if (ids.length === 0) return this.fail(new Error("Select the records to lay out in the list first."));
+    try {
+      const gap = this.prefs()?.gap ?? 4;
+      let res = { sampleKey: "", placed: [] as string[], notPlaced: [] as string[] };
+      doc.transaction("OpenCatalog: Repeat layout", () => {
+        res = doc.repeatSelection(ds.id, ids, gap);
+      });
+      if (res.placed.length) await this.updateDocument(false, new Set(res.placed), true);
+      const extra = res.notPlaced.length ? ` ${plural(res.notPlaced.length, "record")} did not fit on the page (pagination comes in phase 3): ${res.notPlaced.slice(0, 5).join(", ")}${res.notPlaced.length > 5 ? "…" : ""}.` : "";
+      this.message = { text: `Repeated the layout of ${res.sampleKey} for ${plural(res.placed.length, "record")}.${extra}`, error: res.notPlaced.length > 0 };
+      this.renderStatus();
     } catch (e) {
       this.fail(e);
     }
@@ -333,20 +465,26 @@ export class Panel {
   }
 
   /** Data → document. With `selectionOnly`, only links to the selected records are updated. */
-  updateDocument(selectionOnly = false): void {
+  async updateDocument(selectionOnly = false, keys?: Set<string>, quiet = false): Promise<void> {
     const doc = this.requireDocument();
     if (!this.source || !doc) return;
     try {
       const items = doc.scan();
-      const scope = selectionOnly ? { keys: new Set(this.selected) } : {};
+      const scope = keys ? { keys } : selectionOnly ? { keys: new Set(this.selected) } : {};
+      const scoped = scope.keys ? items.filter((i) => scope.keys!.has(i.link.key)) : items;
+      const failed = await this.ensureDownloaded(imageUrlsFor(scoped, this.contexts()));
       const plan = planUpdateDocument(items, this.contexts(), scope);
       const res = applyDocumentPlan(doc, plan);
-      this.counts = placeCounts(items, this.source.id);
+      for (const e of res.errors) {
+        const reason = [...failed].find(([u]) => e.message.includes(u));
+        if (reason) e.message += ` (${reason[1]})`;
+      }
+      this.counts = placeCounts(doc.scan(), this.source.id);
       const parts = [`${plural(res.updated, "field")} updated`, `${plan.unchanged} unchanged`];
       if (plan.otherSources) parts.push(`${plan.otherSources} from other sources skipped`);
       if (res.errors.length) parts.push(plural(res.errors.length, "error"));
-      this.report = { title: `Update document: ${parts.join(", ")}.`, ok: res.errors.length === 0, issues: res.errors };
-      this.message = null;
+      if (!quiet || res.errors.length) this.report = { title: `Update document: ${parts.join(", ")}.`, ok: res.errors.length === 0, issues: res.errors };
+      if (!quiet) this.message = null;
       this.renderAll();
     } catch (e) {
       this.fail(e);
@@ -357,11 +495,12 @@ export class Panel {
   updatePanel(): void {
     const doc = this.requireDocument();
     const ds = this.source;
-    if (!ds || !doc) return;
+    if (!ds || !doc || !this.raw) return;
     try {
       const items = doc.scan();
       const plan = planUpdatePanel(items, ds);
-      this.source = applyPanelPlan(ds, plan);
+      this.raw = applyPanelPlan(this.raw, plan);
+      this.rebuild();
       for (const e of plan.edits) this.edited.set(cellKey(e.recordId, e.field), e.to);
       this.counts = placeCounts(items, ds.id);
       const parts = [`${plural(plan.edits.length, "value")} taken from the document`, `${plan.unchanged} unchanged`];
@@ -395,7 +534,7 @@ export class Panel {
     if (!this.source) return;
     const base = this.source.name.replace(/\s*\[.*\]$/, "").replace(/\.[^.]+$/, "");
     try {
-      if (await this.host.saveTextFile(`${base}.csv`, toCsv(this.source))) {
+      if (await this.host.saveTextFile(`${base}.csv`, toCsv(this.raw ?? this.source))) {
         this.edited.clear();
         this.info("Saved. Open the saved file to keep working from it.");
         this.renderAll();
@@ -445,7 +584,8 @@ export class Panel {
         h("label", { class: "oc-label", title: "Field that uniquely identifies each record. Placed fields remember this value." }, "Key"),
         select(keyOptions, ds.keyField ?? "", (v) => {
           try {
-            this.source = withKeyField(ds, v === "" ? null : v);
+            this.raw = withKeyField(this.raw ?? ds, v === "" ? null : v);
+            this.rebuild();
             this.selected.clear();
             this.counts = null;
             this.message = null;
@@ -457,7 +597,8 @@ export class Panel {
         }),
         h("label", { class: "oc-label", title: "Decimal separator for numbers placed in the document" }, "Decimal"),
         select([{ value: ".", label: "1.5" }, { value: ",", label: "1,5" }], ds.decimalSeparator, (v) => {
-          this.source = { ...ds, decimalSeparator: v as "." | "," };
+          if (this.raw) this.raw = { ...this.raw, decimalSeparator: v as "." | "," };
+          this.rebuild();
           this.persist();
           this.renderGrid();
         }),
@@ -500,20 +641,47 @@ export class Panel {
     if (this.showFilters) this.renderFilters(fieldOpts);
     if (this.showFields) {
       this.fieldsBox.append(
-        ...ds.fields.map((f) =>
-          h("label", { class: "oc-fieldtoggle" },
-            h("input", { type: "checkbox", checked: !this.hidden.has(f.name), on: { change: (e) => {
-              if ((e.target as HTMLInputElement).checked) this.hidden.delete(f.name);
-              else this.hidden.add(f.name);
-              this.persist();
-              this.renderControls();
-              this.renderDocBar();
-              this.renderGrid();
-            } } }),
-            ` ${f.name} `, h("span", { class: "oc-muted" }, f.type)),
-        ),
+        renderFieldsEditor({
+          source: ds,
+          hidden: this.hidden,
+          editing: this.editingFormat,
+          computed: this.prefs()?.computed ?? [],
+          errors: this.computedErrors,
+          onToggleHidden: (field, visible) => {
+            if (visible) this.hidden.delete(field);
+            else this.hidden.add(field);
+            this.persist();
+            this.renderControls();
+            this.renderDocBar();
+            this.renderGrid();
+          },
+          onEdit: (field) => {
+            this.editingFormat = field;
+            this.renderControls();
+          },
+          onFormat: (field, format) => this.changeSettings((p) => {
+            const formats = { ...(p.formats ?? {}) };
+            if (format) formats[field] = format;
+            else delete formats[field];
+            p.formats = formats;
+          }),
+          onComputed: (defs) => this.changeSettings((p) => {
+            p.computed = defs;
+          }),
+        }),
       );
     }
+  }
+
+  private changeSettings(fn: (p: SourcePrefs) => void): void {
+    const p = this.settingsFor();
+    if (!p) return;
+    fn(p);
+    this.rebuild();
+    this.persist();
+    this.renderControls();
+    this.renderDocBar();
+    this.renderGrid();
   }
 
   private renderFilters(fieldOpts: { value: string; label: string }[]): void {
@@ -567,13 +735,36 @@ export class Panel {
         h("button", { class: "oc-btn", disabled: !n, title: "One paragraph per visible text field", on: { click: () => this.placeFields(visible.filter((f) => f.type !== "image").map((f) => f.name)) } }, "Place visible fields"),
       ),
       h("div", { class: "oc-row" },
+        h("button", { class: "oc-btn", disabled: !n, title: "One row per selected record, one column per visible text field; every cell stays linked", on: { click: () => this.placeTable() } }, "Place as table"),
+        h("label", { class: "oc-label", title: "First table row shows the field names" },
+          h("input", { type: "checkbox", checked: this.prefs()?.tableHeader !== false, on: { change: (e) => {
+            const p = this.settingsFor();
+            if (p) p.tableHeader = (e.target as HTMLInputElement).checked;
+            this.persist();
+          } } }), " header"),
+        h("button", { class: "oc-btn", disabled: !n, title: "Select frames that show one record (with the selection tool), then copy that layout for every selected record on the page", on: { click: () => void this.repeatLayout() } }, "Repeat layout"),
+        h("span", { class: "oc-label", title: "Space between repeated blocks, in document units" }, "gap"),
+        (() => {
+          const gap = h("input", { class: "oc-input", type: "number", min: "0", value: this.prefs()?.gap ?? 4, style: "width:52px" });
+          gap.addEventListener("change", () => {
+            const p = this.settingsFor();
+            if (p) p.gap = Math.max(0, Number(gap.value) || 0);
+            this.persist();
+          });
+          return gap;
+        })(),
+      ),
+      h("div", { class: "oc-row" },
         h("button", { class: "oc-btn oc-primary", title: "Write current data into every linked field of the document", on: { click: () => this.updateDocument(false) } }, "Update document"),
         h("button", { class: "oc-btn", disabled: !n, title: "Update only the fields of the selected records", on: { click: () => this.updateDocument(true) } }, "Update selected"),
         h("button", { class: "oc-btn", title: "Take text edited in the document back into the panel", on: { click: () => this.updatePanel() } }, "Update panel"),
         h("span", { class: "oc-label" }, "Show"),
-        select([{ value: "all", label: "all records" }, { value: "placed", label: "placed" }, { value: "unplaced", label: "not placed" }], this.placedFilter, (v) => {
+        select([
+          { value: "all", label: "all records" }, { value: "placed", label: "placed" }, { value: "unplaced", label: "not placed" },
+          ...(this.diff ? [{ value: "new", label: `new (${this.diff.added.length})` }, { value: "changed", label: `changed (${this.diff.changed.size})` }] : []),
+        ], this.placedFilter, (v) => {
           this.placedFilter = v as PlacedFilter;
-          if (v !== "all") this.refreshCounts(false);
+          if (v === "placed" || v === "unplaced") this.refreshCounts(false);
           this.renderDocBar();
           this.renderGrid();
         }),
@@ -616,6 +807,12 @@ export class Panel {
   }
 
   private viewSource(ds: DataSource): DataSource {
+    if (this.placedFilter === "new" || this.placedFilter === "changed") {
+      const d = this.diff;
+      if (!d) return ds;
+      const ids = new Set(this.placedFilter === "new" ? d.added : [...d.changed.keys()]);
+      return { ...ds, records: ds.records.filter((r) => ids.has(r.id)) };
+    }
     if (this.placedFilter === "all" || !this.counts) return ds;
     const counts = this.counts;
     const want = this.placedFilter === "placed";
@@ -695,12 +892,15 @@ export class Panel {
       h("div", { class: `oc-gutter${count ? " oc-placed" : ""}`, style: row.depth ? `width:${16 + row.depth * 6}px` : "" }, this.counts ? (count ? String(count) : "·") : ""),
       ...cols.map((c) => {
         const v = r.values[c];
-        const text = this.source ? formatForDocument(v, this.source) : formatValue(v);
+        const def = this.source?.fields.find((f) => f.name === c);
+        const text = this.source ? formatFieldValue(v, def, this.source) : formatValue(v);
         const edited = this.edited.has(cellKey(r.id, c));
+        const changed = !edited && (this.diff?.changed.get(r.id)?.includes(c) ?? false);
+        const isNew = this.diff?.added.includes(r.id) ?? false;
         return h("div", {
-          class: `oc-td${typeof v === "number" ? " oc-num" : ""}${edited ? " oc-edited" : ""}`,
+          class: `oc-td${typeof v === "number" ? " oc-num" : ""}${edited ? " oc-edited" : changed ? " oc-changed" : isNew ? " oc-new" : ""}${def?.expression ? " oc-computed-cell" : ""}`,
           style: `width:${COL_WIDTH}px`,
-          title: edited ? `${text}\n(edited in the document, not saved)` : text,
+          title: edited ? `${text}\n(edited in the document, not saved)` : changed ? `${text}\n(changed since the last load)` : text,
         }, text.replace(/\s*[\r\n]\s*/g, " ⏎ "));
       }),
     );

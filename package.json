@@ -1,6 +1,6 @@
 {
   "name": "opencatalog",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open-source data-driven catalog publishing for Adobe InDesign (UXP plugin).",
   "license": "Apache-2.0",
   "private": true,
@@ -10,7 +10,8 @@
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "e2e": "npm run build && node test/e2e/phase1.cjs && node test/e2e/phase2.cjs"
   },
   "dependencies": {
     "fflate": "0.8.2"

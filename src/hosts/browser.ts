@@ -1,5 +1,6 @@
 /** Host adapter for the browser preview (development only, no InDesign). */
 import type { DocumentAdapter } from "../core/links";
+import { cacheFileName } from "../core/images";
 import { Host, PickedFile, storageSettings } from "./host";
 
 /** Browser host; pass a document (e.g. a MemoryDocument) to simulate InDesign. */
@@ -30,6 +31,16 @@ export function createBrowserHost(document_: DocumentAdapter | null = null): Hos
     getDocument: () => document_,
     async pickFolder() {
       return window.prompt("Image folder (absolute path):", "/Users/me/catalog/images");
+    },
+    async downloadImages(urls) {
+      // The preview does not download; it pretends every URL is cached (except ones containing "missing").
+      const downloaded = new Map<string, string>();
+      const failed = new Map<string, string>();
+      for (const u of urls) {
+        if (u.includes("missing")) failed.set(u, "HTTP 404");
+        else downloaded.set(u, `/cache/${cacheFileName(u)}`);
+      }
+      return { downloaded, failed };
     },
     async saveTextFile(suggestedName, text) {
       const a = document.createElement("a");

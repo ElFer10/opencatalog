@@ -41,7 +41,9 @@ export type LinkKind =
   /** A field inside running text, marked with an XML element. */
   | "inline-text"
   /** A graphic frame shows an image field. */
-  | "image";
+  | "image"
+  /** A table cell shows a field. */
+  | "cell";
 
 /** A link found in the document, with an opaque handle the document adapter understands. */
 export interface LinkedItem<Ref = unknown> {
@@ -71,9 +73,22 @@ export interface DocumentAdapter<Ref = unknown> {
   placeImage(link: FieldLink, path: string): PlaceResult;
   /** Select and scroll to the item, e.g. from an error report. */
   reveal(item: LinkedItem<Ref>): void;
+  /** Place a table: one row per record, each cell linked. `header` adds an unlinked first row. */
+  placeTable(header: string[] | null, rows: { link: FieldLink; text: string }[][]): PlaceResult;
+  /**
+   * Repeat the selected layout (frames linked to one sample record) once per target record,
+   * arranged in a grid on the same page. Returns the keys that did not fit.
+   */
+  repeatSelection(sourceId: string, keys: string[], gap: number): RepeatResult;
+}
+
+export interface RepeatResult {
+  sampleKey: string;
+  placed: string[];
+  notPlaced: string[];
 }
 
 export interface PlaceResult {
   /** Where the content went, for the status message. */
-  target: "insertion-point" | "text-frame" | "new-frame" | "graphic-frame";
+  target: "insertion-point" | "text-frame" | "new-frame" | "graphic-frame" | "table";
 }
