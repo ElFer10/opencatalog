@@ -36,7 +36,8 @@ function writeStatic() {
       "preview.js",
       `<div class="pv-banner">Browser preview (no InDesign).
 <button id="demo">Load demo data</button>
-<button id="demo2" title="Simulates editing the data file and pressing Reload">Load demo with changed prices</button></div>
+<button id="demo2" title="Simulates editing the data file and pressing Reload">Load demo with changed prices</button>
+<button id="demo3" title="56 products in 3 categories, for pagination">Load 56-product catalogue</button></div>
 <style>
 .pv-banner { padding: 6px 8px; font: 12px system-ui; background: #fffbe6; border-bottom: 1px solid #e6d98c; }
 body { display: flex; flex-direction: column; }
@@ -58,6 +59,8 @@ body { display: flex; flex-direction: column; }
 .pv-field { background: #e3f0ff; border-bottom: 1px solid #1473e6; }
 .pv-img { padding: 8px; text-align: center; background: #f2f2f2; color: #555; font-size: 10px; word-break: break-all; }
 .pv-muted { color: #888; }
+.pv-pagenum { margin: 10px 12px 0; color: #666; font-size: 11px; }
+.pv-flow { font-size: 11px; line-height: 14.4px; }
 </style>`,
     ).replace('<div id="app"></div>', '<div class="pv-wrap"><div id="app"></div><div id="doc"></div></div>'),
   );

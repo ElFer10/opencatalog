@@ -80,7 +80,30 @@ export interface DocumentAdapter<Ref = unknown> {
    * arranged in a grid on the same page. Returns the keys that did not fit.
    */
   repeatSelection(sourceId: string, keys: string[], gap: number): RepeatResult;
+  /** Describe the selected template block: its record, bounds and the page's margin area. */
+  templateInfo(sourceId: string): TemplateInfo;
+  /** Copy the selected template block per plan, adding pages after the template's page as needed. */
+  paginateTemplate(plan: { pages: { key: string; dx: number; dy: number }[][] }): PaginateResult;
+  /** Write flow items into a threaded story, adding pages and linked frames until nothing overflows. */
+  paginateFlow(items: FlowItemLike[], separator: "paragraph" | "tab"): PaginateResult;
+  pdfPresets(): string[];
+  exportPdf(path: string, preset: string): void;
 }
+
+export interface TemplateInfo {
+  sampleKey: string;
+  block: [number, number, number, number];
+  area: [number, number, number, number];
+}
+
+export interface PaginateResult {
+  pagesAdded: number;
+}
+
+/** Structural copy of paginate.FlowItem (kept here to avoid a module cycle). */
+export type FlowItemLike =
+  | { kind: "heading"; level: number; text: string }
+  | { kind: "record"; key: string; fields: { link: FieldLink; text: string }[] };
 
 export interface RepeatResult {
   sampleKey: string;

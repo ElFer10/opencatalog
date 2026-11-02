@@ -1,4 +1,4 @@
-# InDesign test checklist (phases 1–2)
+# InDesign test checklist (phases 1–3)
 
 The core is unit-tested and the panel is tested in the browser preview, but the InDesign
 adapter (`src/hosts/indesign.ts`) can only be verified inside InDesign. Run through this list
@@ -44,3 +44,19 @@ If something fails, open UXP Developer Tools › *Debug* for the plugin and copy
     with each record's data; Edit › Undo removes them in one step.
 16. **Synchronize** — Add, change and delete rows in the data file, Reload. The status line counts
     them, changed cells are highlighted, and placed fields of deleted rows are listed in the report.
+
+## Phase 3
+
+17. **Template pagination** — Load a file with 30+ records, group by a category, build a block for
+    one record, select it, open **Paginate…**, tick *new page for each …* and click **Paginate**.
+    Pages are added, each category starts on a new page, every copy shows its record, and
+    Edit › Undo removes the whole pagination.
+18. **Facing pages** — Repeat 17 in a document with facing pages; check whether copies on left pages
+    respect the margins (known limit: they use the template page's margins).
+19. **Flow pagination** — Create paragraph styles `OC Heading 1`, `OC Heading 2` and `OC Record`
+    (with tab stops). Group by two fields, choose *Text flow*, separator *tab*, and **Paginate**
+    with nothing selected. Headings and records use the styles; pages with threaded frames are
+    added until nothing overflows.
+20. **Update after pagination** — Change prices in the data, Reload, **Update document**: the
+    paginated pages update in place.
+21. **PDF** — Choose a preset and **Export PDF…**; the PDF opens correctly.

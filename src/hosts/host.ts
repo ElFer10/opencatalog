@@ -24,6 +24,8 @@ export interface Host {
   pickFolder(): Promise<string | null>;
   /** Ask where to save a text file and write it. Resolves false when cancelled. */
   saveTextFile(suggestedName: string, text: string): Promise<boolean>;
+  /** Ask for a save location; resolves the native path, or null when cancelled. */
+  pickSavePath(suggestedName: string): Promise<string | null>;
   /** Download image URLs into a local cache. Returns URL → local path, plus failures. */
   downloadImages(urls: readonly string[]): Promise<DownloadResult>;
 }

@@ -2,8 +2,9 @@
 
 Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP plugin.
 
-> Status: **phase 2 (0.3.0)** — data sources, placing and two-way sync, plus field formats,
-> computed fields, image URLs, linked tables, repeated layouts and change tracking on reload.
+> Status: **phase 3 (0.4.0)** — data sources, placing and two-way sync, layout tools (formats,
+> computed fields, image URLs, tables, repeated blocks, change tracking) and automatic pagination
+> with PDF export.
 
 ## What works today
 
@@ -73,6 +74,29 @@ stable key field (SKU, ID…) for reliable updates.
   new, changed and deleted records (and added/removed fields). Changed cells are highlighted,
   **Show: new / changed** filters the list, and placed fields of deleted records are listed.
 
+### Pagination and PDF (phase 3)
+
+Open **Paginate…** in the panel. Records are taken in list order — so filters, sorting and
+grouping decide what goes where — either all records in view or only the selected ones.
+
+- **Template mode**: build one product block (any frames showing fields of one record), select it
+  with the selection tool and click **Paginate**. The block becomes the first record and is copied
+  in a grid over as many pages as needed (new pages use the template page's parent/master), then
+  every copy is filled. With the list grouped, **new page for each …** starts every value of the
+  first group field on a fresh page.
+- **Text flow mode**: each record becomes one paragraph (fields separated by tabs or paragraph
+  breaks) in one threaded story; with the list grouped, a heading paragraph is written whenever a
+  group value changes. Start from a selected text frame, a text cursor, or nothing (a frame filling
+  the page margins is created). Pages and threaded frames are added until nothing overflows.
+  Paragraph styles named **OC Heading 1**, **OC Heading 2**, … and **OC Record** are applied when the
+  document has them — define those styles (tabs, sizes, spacing) to design the flowed catalogue.
+- Every placed field stays linked, so **Update document** keeps the paginated catalogue current.
+- **Export PDF…** exports the document with a PDF preset chosen in the pagination box.
+
+Known limits: template copies use the margins of the template's page for every page (mirrored
+inside/outside margins on facing pages are not yet handled); flow mode does not yet handle
+inline images or keep records together across frame breaks.
+
 ## Install in InDesign (development)
 
 Requirements: Node.js 18+, InDesign 2023 (18.5) or later, and Adobe **UXP Developer Tools**
@@ -121,7 +145,7 @@ test/          unit tests and fixtures
 | 0 — Base | Data sources, panel with search, filters, sort and grouping ✅ |
 | 1 — MVP | Place text and image fields, store links in the document, Update Document / Update Panel, place count and error report ✅ |
 | 2 — Layout | Computed fields, number formats, images from URLs, repeated layout blocks, linked tables, synchronize (new/changed/deleted) ✅ |
-| 3 — Pagination | Flow and template pagination, then guides, masters and positions; page insertion; PDF export |
+| 3 — Pagination | Template and text-flow pagination, page breaks per group, page insertion, PDF export ✅ (guide/master/position modes later) |
 | 4 — Advanced | Local helper for ODBC/SQLite, generic REST connector for PIM/DAM, versions, merged documents, scripting API |
 
 ## Clean-room policy
@@ -140,7 +164,8 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 ### En español (resumen)
 
 OpenCatalog es una alternativa open source para crear catálogos en InDesign a partir de datos.
-La versión 0.3.0 carga CSV, Excel y JSON, coloca campos de texto e imagen y los mantiene sincronizados.
+La versión 0.4.0 carga CSV, Excel y JSON, coloca campos de texto e imagen y los mantiene sincronizados,
+pagina automáticamente (por plantilla o por flujo de texto) y exporta a PDF.
 Añade formatos de campo, campos calculados con expresiones, imágenes desde URL, tablas vinculadas,
 repetición de un bloque de producto por registro y detección de registros nuevos, cambiados y borrados.
 Para probarla: `npm install && npm run build`, luego en UXP Developer Tools → *Add Plugin* →

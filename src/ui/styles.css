@@ -71,3 +71,4 @@
 .oc-expr { width: 260px; font-family: Menlo, Consolas, monospace; }
 .oc-help { font-size: 0.9em; }
 .oc-computed { border-top: 1px solid var(--oc-border); margin-top: 4px; }
+.oc-paginate { margin: 0 8px 4px; border-left: 2px solid var(--oc-accent); }

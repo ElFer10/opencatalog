@@ -35,8 +35,15 @@ function renderTable(f: MemFrame): HTMLElement {
 function renderFrame(f: MemFrame): HTMLElement {
   const selected = isSelected(f.id);
   const frameLink = decodeLink(f.label);
+  const threadText = (): HTMLElement => {
+    const t = f.thread!;
+    const story = MemoryDocument.storyText(doc.frame(t.first)).replace(/\r$/, "").split("\r");
+    return h("div", { class: "pv-text pv-flow" }, story.slice(t.from, t.to).join("\n").replace(/\t/g, "  ·  "));
+  };
   const body =
-    f.kind === "table"
+    f.thread
+      ? threadText()
+      : f.kind === "table"
       ? renderTable(f)
       : f.kind === "graphic"
       ? h("div", { class: "pv-img" }, f.image ? `🖼 ${f.image}` : "(empty graphic frame)")
@@ -75,7 +82,7 @@ function renderFrame(f: MemFrame): HTMLElement {
     } },
   },
     h("div", { class: "pv-frame-head" },
-      `${f.kind === "graphic" ? "Graphic" : f.kind === "table" ? "Table" : "Text"} ${f.id}`,
+      `${f.kind === "graphic" ? "Graphic" : f.kind === "table" ? "Table" : "Text"} ${f.id}${f.thread ? ` · flow lines ${f.thread.from + 1}–${f.thread.to}` : ""}`,
       frameLink ? h("span", { class: "pv-badge" }, `linked: ${frameLink.key} · ${frameLink.field}`) : null,
       f.kind === "text" && !frameLink
         ? h("button", { class: "pv-mini", title: "Put the text cursor at the end of this frame", on: { click: (e) => {
@@ -100,10 +107,15 @@ function renderDoc(): void {
       h("button", { on: { click: () => { doc.selection = null; renderDoc(); } } }, "Deselect"),
       h("span", { class: "pv-muted" }, sel ? (sel.offset !== undefined ? `Cursor in frame ${sel.frameId}` : `${1 + (sel.more?.length ?? 0)} selected`) : "Nothing selected"),
     ),
-    h("div", { class: "pv-page", style: `width:${PAGE[3] * SCALE}px;height:${PAGE[2] * SCALE}px` },
-      h("div", { class: "pv-margins", style: `top:${12 * SCALE}px;left:${12 * SCALE}px;right:${12 * SCALE}px;bottom:${12 * SCALE}px` }),
-      ...doc.frames.map(renderFrame),
-      doc.frames.length === 0 ? h("p", { class: "pv-muted", style: "position:absolute;top:40px;left:40px" }, "Empty page. Place a field from the panel, or add a frame.") : null),
+    ...Array.from({ length: doc.pageCount }, (_, i) => String(i + 1)).map((page) =>
+      h("div", { class: "pv-pagewrap" },
+        h("div", { class: "pv-pagenum" }, `Page ${page}`),
+        h("div", { class: "pv-page", "data-page": page, style: `width:${PAGE[3] * SCALE}px;height:${PAGE[2] * SCALE}px` },
+          h("div", { class: "pv-margins", style: `top:${12 * SCALE}px;left:${12 * SCALE}px;right:${12 * SCALE}px;bottom:${12 * SCALE}px` }),
+          ...doc.frames.filter((f) => f.page === page).map(renderFrame),
+          doc.frames.length === 0 ? h("p", { class: "pv-muted", style: "position:absolute;top:40px;left:40px" }, "Empty page. Place a field from the panel, or add a frame.") : null),
+      ),
+    ),
   );
 }
 
@@ -129,5 +141,20 @@ const loadDemo = (text: string) =>
 document.getElementById("demo")?.addEventListener("click", () => loadDemo(demo));
 // "Change prices" simulates editing the data file and reloading it.
 document.getElementById("demo2")?.addEventListener("click", () => loadDemo(demo.replace("4,95", "5,25").replace("Green tea", "Sencha green tea")));
+
+// A larger generated catalogue for trying pagination.
+const big = (() => {
+  const cats: [string, string[]][] = [["Drinks", ["Coffee", "Tea", "Juice"]], ["Oils", ["Olive", "Seed"]], ["Spices", ["Salt", "Pepper", "Herbs"]]];
+  const lines = ["SKU;Product;Category;Subcategory;Price;Unit;Image"];
+  let n = 0;
+  for (const [cat, subs] of cats)
+    for (const sub of subs)
+      for (let i = 1; i <= 7; i++) {
+        n++;
+        lines.push(`P-${String(n).padStart(3, "0")};${sub} no. ${i};${cat};${sub};${(2 + ((n * 37) % 90) / 10).toFixed(2).replace(".", ",")};${100 * i} g;${sub.toLowerCase()}-${i}.jpg`);
+      }
+  return lines.join("\n");
+})();
+document.getElementById("demo3")?.addEventListener("click", () => panel.openPicked({ name: "big-catalogue.csv", bytes: new TextEncoder().encode(big), token: "big", path: "/Users/me/catalog/big-catalogue.csv" }));
 
 (window as unknown as Record<string, unknown>).opencatalog = { panel, doc };

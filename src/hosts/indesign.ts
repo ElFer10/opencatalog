@@ -10,6 +10,7 @@
  * The InDesign UXP DOM is synchronous and mirrors the ExtendScript DOM.
  */
 import { Bounds, gridOffsets, retargetEncoded, sampleKeyOf, unionBounds } from "../core/layout";
+import { FLOW_STYLES } from "../core/paginate";
 import {
   DocumentAdapter,
   FIELD_TAG,
@@ -17,8 +18,10 @@ import {
   LINK_LABEL,
   LinkedItem,
   PlaceResult,
+  PaginateResult,
   RepeatResult,
   STORY_TAG,
+  TemplateInfo,
   decodeLink,
   encodeLink,
 } from "../core/links";
@@ -102,14 +105,14 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
   };
 
   /** Insert fields as tagged runs at a story index; returns nothing, throws on failure. */
-  const insertInline = (story: any, index: number, fields: { link: FieldLink; text: string }[]) => {
+  const insertInline = (story: any, index: number, fields: { link: FieldLink; text: string }[], separator = "\r"): number => {
     const parent = storyElement(story);
     const fieldTag = tag(FIELD_TAG);
     let idx = index;
     fields.forEach((f, i) => {
       if (i > 0) {
-        story.insertionPoints.item(idx).contents = "\r";
-        idx += 1;
+        story.insertionPoints.item(idx).contents = separator;
+        idx += separator.length;
       }
       const len = f.text.length;
       let content: any;
@@ -121,6 +124,7 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
       el.xmlAttributes.add(LINK_LABEL, encodeLink(f.link));
       idx += len;
     });
+    return idx;
   };
 
   const newFrameBounds = (heightShare: number, widthShare: number): number[] => {
@@ -137,6 +141,68 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
   const firstSelection = (): any => {
     const sel = app.selection;
     return sel && sel.length > 0 ? sel[0] : null;
+  };
+
+  /** Page items selected with the selection tool (not text). */
+  const selectedItems = (): any[] =>
+    (app.selection ?? []).filter((x: any) => x && x.geometricBounds !== undefined && !TEXT_SELECTIONS.has(x.constructorName));
+
+  /** Call fn for every link stored in an item (labels, inline XML fields, table cells), with a setter. */
+  const visit = (item: any, fn: (raw: string, set: (v: string) => void) => void) => {
+    const all = [item, ...(item.allPageItems ?? [])];
+    for (const it of all) {
+      try {
+        const raw = it.extractLabel(LINK_LABEL);
+        if (raw) fn(raw, (v) => it.insertLabel(LINK_LABEL, v));
+      } catch {
+        /* not labellable */
+      }
+      if (it.constructorName !== "TextFrame") continue;
+      const story = it.parentStory;
+      const walkXml = (el: any) => {
+        const kids = el.xmlElements;
+        for (let i = 0; i < kids.length; i++) {
+          const k = kids.item(i);
+          if (k.markupTag.name === FIELD_TAG) {
+            const attr = k.xmlAttributes.itemByName(LINK_LABEL);
+            if (valid(attr)) fn(String(attr.value), (v) => (attr.value = v));
+          } else walkXml(k);
+        }
+      };
+      try {
+        const el = story.associatedXMLElement;
+        if (valid(el)) walkXml(el);
+      } catch {
+        /* untagged story */
+      }
+      const tables = story.tables;
+      for (let t = 0; t < tables.length; t++) {
+        const cells = tables.item(t).cells;
+        for (let c = 0; c < cells.length; c++) {
+          const cell = cells.item(c);
+          const raw = cell.extractLabel(LINK_LABEL);
+          if (raw) fn(raw, (v) => cell.insertLabel(LINK_LABEL, v));
+        }
+      }
+    }
+  };
+
+  const pageArea = (page: any): Bounds => {
+    const [y1, x1, y2, x2] = page.bounds as number[];
+    const m = page.marginPreferences;
+    return [y1! + Number(m.top), x1! + Number(m.left), y2! - Number(m.bottom), x2! - Number(m.right)];
+  };
+
+  const ensurePage = (offset: number, like: any): any => {
+    while (doc.pages.length <= offset) {
+      const p = doc.pages.add(id.LocationOptions.AT_END);
+      try {
+        p.appliedMaster = like.appliedMaster;
+      } catch {
+        /* keep default master */
+      }
+    }
+    return doc.pages.item(offset);
   };
 
   return {
@@ -328,58 +394,17 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
     },
 
     repeatSelection(sourceId, keys, gap): RepeatResult {
-      const sel = (app.selection ?? []).filter((x: any) => x && x.geometricBounds !== undefined && !TEXT_SELECTIONS.has(x.constructorName));
+      const sel = selectedItems();
       if (sel.length === 0) throw new Error("Select the frames (or group) that show one record with the selection tool");
       // Collect links inside the selection to find the sample record.
       const links: FieldLink[] = [];
-      const visit = (item: any, fn: (raw: string, set: (v: string) => void) => void) => {
-        const all = [item, ...(item.allPageItems ?? [])];
-        for (const it of all) {
-          try {
-            const raw = it.extractLabel(LINK_LABEL);
-            if (raw) fn(raw, (v) => it.insertLabel(LINK_LABEL, v));
-          } catch {
-            /* not labellable */
-          }
-          if (it.constructorName !== "TextFrame") continue;
-          const story = it.parentStory;
-          const walkXml = (el: any) => {
-            const kids = el.xmlElements;
-            for (let i = 0; i < kids.length; i++) {
-              const k = kids.item(i);
-              if (k.markupTag.name === FIELD_TAG) {
-                const attr = k.xmlAttributes.itemByName(LINK_LABEL);
-                if (valid(attr)) fn(String(attr.value), (v) => (attr.value = v));
-              } else walkXml(k);
-            }
-          };
-          try {
-            const el = story.associatedXMLElement;
-            if (valid(el)) walkXml(el);
-          } catch {
-            /* untagged story */
-          }
-          const tables = story.tables;
-          for (let t = 0; t < tables.length; t++) {
-            const cells = tables.item(t).cells;
-            for (let c = 0; c < cells.length; c++) {
-              const cell = cells.item(c);
-              const raw = cell.extractLabel(LINK_LABEL);
-              if (raw) fn(raw, (v) => cell.insertLabel(LINK_LABEL, v));
-            }
-          }
-        }
-      };
       for (const item of sel) visit(item, (raw) => { const l = decodeLink(raw); if (l) links.push(l); });
       const sampleKey = sampleKeyOf(links, sourceId);
       const targets = keys.filter((k) => k !== sampleKey);
       const block = unionBounds(sel.map((x: any) => x.geometricBounds as Bounds));
       const page = sel[0].parentPage;
       if (!valid(page)) throw new Error("The selection must be on a page, not on the pasteboard");
-      const [y1, x1, y2, x2] = page.bounds as number[];
-      const m = page.marginPreferences;
-      const area: Bounds = [y1! + Number(m.top), x1! + Number(m.left), y2! - Number(m.bottom), x2! - Number(m.right)];
-      const offsets = gridOffsets(block, area, targets.length, gap);
+      const offsets = gridOffsets(block, pageArea(page), targets.length, gap);
       const placed: string[] = [];
       targets.slice(0, offsets.length).forEach((key, i) => {
         const [dx, dy] = offsets[i]!;
@@ -391,6 +416,129 @@ export function activeInDesignDocument(): DocumentAdapter<IdRef> | null {
         placed.push(key);
       });
       return { sampleKey, placed, notPlaced: targets.slice(offsets.length) };
+    },
+
+    templateInfo(sourceId): TemplateInfo {
+      const sel = selectedItems();
+      if (sel.length === 0) throw new Error("Select the template block (frames showing one record) with the selection tool");
+      const links: FieldLink[] = [];
+      for (const item of sel) visit(item, (raw) => { const l = decodeLink(raw); if (l) links.push(l); });
+      const page = sel[0].parentPage;
+      if (!valid(page)) throw new Error("The template must be on a page, not on the pasteboard");
+      return { sampleKey: sampleKeyOf(links, sourceId), block: unionBounds(sel.map((x: any) => x.geometricBounds as Bounds)), area: pageArea(page) };
+    },
+
+    paginateTemplate(plan): PaginateResult {
+      const sel = selectedItems();
+      if (sel.length === 0) throw new Error("Select the template block first");
+      const basePage = sel[0].parentPage;
+      const baseOffset = Number(basePage.documentOffset);
+      const before = doc.pages.length;
+      const [by, bx] = basePage.bounds as number[];
+      plan.pages.forEach((slots, p) => {
+        const page = p === 0 ? basePage : ensurePage(baseOffset + p, basePage);
+        const [py, px] = page.bounds as number[];
+        slots.forEach((slot, i) => {
+          if (p === 0 && i === 0 && slot.dx === 0 && slot.dy === 0) {
+            for (const item of sel) visit(item, (raw, set) => set(retargetEncoded(raw, slot.key)));
+            return;
+          }
+          for (const item of sel) {
+            const [gy, gx] = item.geometricBounds as number[];
+            const dup = item.duplicate(page);
+            dup.move([gx! - bx! + px! + slot.dx, gy! - by! + py! + slot.dy]);
+            visit(dup, (raw, set) => set(retargetEncoded(raw, slot.key)));
+          }
+        });
+      });
+      return { pagesAdded: doc.pages.length - before };
+    },
+
+    paginateFlow(items, separator): PaginateResult {
+      const before = doc.pages.length;
+      const s = firstSelection();
+      let story: any;
+      let index: number;
+      if (s && TEXT_SELECTIONS.has(s.constructorName)) {
+        story = s.parentStory;
+        index = s.insertionPoints.item(0).index;
+      } else if (s && s.constructorName === "TextFrame") {
+        if (decodeLink(s.extractLabel(LINK_LABEL))) throw new Error("This frame is linked to a field; select an empty frame or nothing");
+        story = s.parentStory;
+        index = story.insertionPoints.length - 1;
+      } else if (s) throw new Error("Select a text frame, a text cursor or nothing to start the flow");
+      else {
+        const frame = app.activeWindow.activePage.textFrames.add();
+        frame.geometricBounds = pageArea(app.activeWindow.activePage);
+        story = frame.parentStory;
+        index = 0;
+        app.select(frame);
+      }
+      const style = (name: string): any => {
+        try {
+          const st = doc.paragraphStyles.itemByName(name);
+          return valid(st) ? st : null;
+        } catch {
+          return null;
+        }
+      };
+      const sep = separator === "tab" ? "\t" : "\r";
+      let idx = index;
+      for (const it of items) {
+        const start = idx;
+        if (it.kind === "heading") {
+          story.insertionPoints.item(idx).contents = `${it.text}\r`;
+          idx += it.text.length + 1;
+        } else {
+          idx = insertInline(story, idx, it.fields, sep);
+          story.insertionPoints.item(idx).contents = "\r";
+          idx += 1;
+        }
+        const st = style(it.kind === "heading" ? FLOW_STYLES.heading(it.level) : FLOW_STYLES.record);
+        if (st) {
+          try {
+            story.insertionPoints.item(start).paragraphs.item(0).appliedParagraphStyle = st;
+          } catch {
+            /* style is optional */
+          }
+        }
+      }
+      // Add pages with threaded frames until the story no longer overflows.
+      let guard = 0;
+      let last = story.textContainers[story.textContainers.length - 1];
+      while (last.overflows && guard++ < 1000) {
+        const lastPage = last.parentPage;
+        const page = doc.pages.add(id.LocationOptions.AFTER, lastPage);
+        try {
+          page.appliedMaster = lastPage.appliedMaster;
+        } catch {
+          /* default master */
+        }
+        const frame = page.textFrames.add();
+        frame.geometricBounds = pageArea(page);
+        last.nextTextFrame = frame;
+        try {
+          story.recompose();
+        } catch {
+          /* older hosts recompose lazily */
+        }
+        last = frame;
+      }
+      if (guard >= 1000) throw new Error("Stopped after 1000 pages: something in the flow never fits a frame (e.g. a very large inline image)");
+      return { pagesAdded: doc.pages.length - before };
+    },
+
+    pdfPresets(): string[] {
+      const presets = app.pdfExportPresets;
+      const out: string[] = [];
+      for (let i = 0; i < presets.length; i++) out.push(String(presets.item(i).name));
+      return out;
+    },
+
+    exportPdf(path, preset) {
+      const p = app.pdfExportPresets.itemByName(preset);
+      if (!valid(p)) throw new Error(`PDF preset "${preset}" not found`);
+      doc.exportFile(id.ExportFormat.PDF_TYPE, path, false, p);
     },
 
     reveal(item) {

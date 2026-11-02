@@ -8,3 +8,4 @@ export * from "./expr";
 export * from "./computed";
 export * from "./diff";
 export * from "./layout";
+export * from "./paginate";

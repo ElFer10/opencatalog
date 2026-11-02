@@ -80,6 +80,10 @@ export function createUxpHost(): Host {
       }
       return result;
     },
+    async pickSavePath(suggestedName) {
+      const file = await fs.getFileForSaving(suggestedName, { types: [suggestedName.split(".").pop() ?? "pdf"] });
+      return file ? String(file.nativePath) : null;
+    },
     async saveTextFile(suggestedName, text) {
       const file = await fs.getFileForSaving(suggestedName, { types: [suggestedName.split(".").pop() ?? "csv"] });
       if (!file) return false;

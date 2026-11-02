@@ -42,6 +42,9 @@ export function createBrowserHost(document_: DocumentAdapter | null = null): Hos
       }
       return { downloaded, failed };
     },
+    async pickSavePath(suggestedName) {
+      return `/Users/me/Desktop/${suggestedName}`;
+    },
     async saveTextFile(suggestedName, text) {
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));

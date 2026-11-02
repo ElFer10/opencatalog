@@ -13,6 +13,9 @@ import {
   FieldSettings,
   SourceDiff,
   applyFieldSettings,
+  buildFlow,
+  groupStarts,
+  planTemplatePagination,
   diffSources,
   formatFieldValue,
   imageUrlsFor,
@@ -64,7 +67,21 @@ interface SourcePrefs {
   /** Gap between repeated layout blocks, in document units. */
   gap?: number;
   tableHeader?: boolean;
+  pagination?: PaginationPrefs;
 }
+
+interface PaginationPrefs {
+  mode: "template" | "flow";
+  scope: "view" | "selected";
+  /** Template mode: start a new page for each value of the first group field. */
+  pageBreaks: boolean;
+  /** Flow mode: write group headings. */
+  headings: boolean;
+  separator: "paragraph" | "tab";
+  pdfPreset?: string;
+}
+
+const DEFAULT_PAGINATION: PaginationPrefs = { mode: "template", scope: "view", pageBreaks: false, headings: true, separator: "paragraph" };
 
 interface Settings {
   last?: { token: string; name: string; sheet?: string };
@@ -94,6 +111,7 @@ export class Panel {
   private diff: SourceDiff | null = null;
   private downloaded = new Map<string, string>();
   private editingFormat: string | null = null;
+  private showPaginate = false;
   private file: PickedFile | null = null;
   private sheets: string[] = [];
   private sheet: string | undefined;
@@ -464,6 +482,83 @@ export class Panel {
     this.renderGrid();
   }
 
+  private pagination(): PaginationPrefs {
+    return { ...DEFAULT_PAGINATION, ...(this.prefs()?.pagination ?? {}) };
+  }
+
+  private setPagination(change: Partial<PaginationPrefs>): void {
+    const p = this.settingsFor();
+    if (!p) return;
+    p.pagination = { ...this.pagination(), ...change };
+    this.persist();
+    this.renderDocBar();
+  }
+
+  /** Records to paginate, in panel order (groups first, then sort). */
+  private paginationRecords(scope: "view" | "selected") {
+    if (!this.source) return [];
+    const ordered = applyView(this.viewSource(this.source), this.view).records;
+    return scope === "selected" ? ordered.filter((r) => this.selected.has(r.id)) : ordered;
+  }
+
+  /** Lay out every record over as many pages as needed. */
+  async paginate(): Promise<void> {
+    const ds = this.source;
+    const doc = this.requireDocument();
+    if (!ds || !doc) return;
+    const opts = this.pagination();
+    const records = this.paginationRecords(opts.scope);
+    if (records.length === 0) return this.fail(new Error(opts.scope === "selected" ? "Select records first, or paginate all records in view." : "No records in view."));
+    try {
+      if (opts.mode === "template") {
+        const info = doc.templateInfo(ds.id);
+        const group = this.view.groupBy[0];
+        const plan = planTemplatePagination({
+          block: info.block,
+          area: info.area,
+          gap: this.prefs()?.gap ?? 4,
+          keys: records.map((r) => r.id),
+          breakBefore: opts.pageBreaks && group ? groupStarts(records, group) : undefined,
+        });
+        let res = { pagesAdded: 0 };
+        doc.transaction("OpenCatalog: Paginate", () => {
+          res = doc.paginateTemplate(plan);
+        });
+        await this.updateDocument(false, new Set(records.map((r) => r.id)), true);
+        this.message = { text: `Paginated ${plural(records.length, "record")} on ${plural(plan.pages.length, "page")} (${res.pagesAdded} added).`, error: false };
+      } else {
+        const fields = ds.fields.filter((f) => !this.hidden.has(f.name) && f.type !== "image" && !this.view.groupBy.includes(f.name)).map((f) => f.name);
+        if (fields.length === 0) return this.fail(new Error("No visible text fields to flow."));
+        const items = buildFlow(ds, records, { fields, headings: opts.headings ? this.view.groupBy : [] });
+        let res = { pagesAdded: 0 };
+        doc.transaction("OpenCatalog: Paginate (flow)", () => {
+          res = doc.paginateFlow(items, opts.separator);
+        });
+        this.refreshCounts(false);
+        this.message = { text: `Flowed ${plural(records.length, "record")}${res.pagesAdded ? `; ${plural(res.pagesAdded, "page")} added` : ""}.`, error: false };
+      }
+      this.renderAll();
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async exportPdf(): Promise<void> {
+    const doc = this.requireDocument();
+    if (!doc) return;
+    try {
+      const presets = doc.pdfPresets();
+      const preset = this.pagination().pdfPreset && presets.includes(this.pagination().pdfPreset!) ? this.pagination().pdfPreset! : presets[0];
+      if (!preset) return this.fail(new Error("No PDF presets found in InDesign."));
+      const path = await this.host.pickSavePath(`${doc.name.replace(/\.indd$/i, "")}.pdf`);
+      if (!path) return;
+      doc.exportPdf(path, preset);
+      this.info(`Exported PDF with “${preset}” to ${path}.`);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
   /** Data → document. With `selectionOnly`, only links to the selected records are updated. */
   async updateDocument(selectionOnly = false, keys?: Set<string>, quiet = false): Promise<void> {
     const doc = this.requireDocument();
@@ -770,12 +865,68 @@ export class Panel {
         }),
         h("button", { class: "oc-btn oc-small", title: "Count how often each record is placed", on: { click: () => this.refreshCounts() } }, "Count"),
       ),
+      this.renderPaginateRow(),
+      this.showPaginate ? this.renderPaginateBox() : null,
       h("div", { class: "oc-row" },
         h("span", { class: "oc-label" }, "Images"),
         h("span", { class: "oc-path", title: this.prefs()?.imageFolder ?? "" }, this.prefs()?.imageFolder ?? (this.file?.path ? "next to the data file" : "no folder chosen")),
         h("button", { class: "oc-btn oc-small", on: { click: () => void this.chooseImageFolder() } }, "Choose…"),
         this.edited.size ? h("span", { class: "oc-edited-note" }, plural(this.edited.size, "edited value")) : null,
         this.edited.size ? h("button", { class: "oc-btn oc-small", on: { click: () => void this.saveCsv() } }, "Save as CSV…") : null,
+      ),
+    );
+  }
+
+  private renderPaginateRow(): HTMLElement {
+    return h("div", { class: "oc-row" },
+      h("button", { class: `oc-btn${this.showPaginate ? " oc-on" : ""}`, on: { click: () => { this.showPaginate = !this.showPaginate; this.renderDocBar(); } } }, "Paginate…"),
+      h("button", { class: "oc-btn", title: "Export the document as PDF", on: { click: () => void this.exportPdf() } }, "Export PDF…"),
+    );
+  }
+
+  private renderPaginateBox(): HTMLElement {
+    const o = this.pagination();
+    const doc = this.host.getDocument();
+    let presets: string[] = [];
+    try {
+      presets = doc?.pdfPresets() ?? [];
+    } catch {
+      presets = [];
+    }
+    const group = this.view.groupBy[0];
+    const count = this.paginationRecords(o.scope).length;
+    return h("div", { class: "oc-paginate" },
+      h("div", { class: "oc-row" },
+        h("span", { class: "oc-label" }, "Mode"),
+        select([
+          { value: "template", label: "Template: repeat the selected block" },
+          { value: "flow", label: "Text flow: one paragraph per record" },
+        ], o.mode, (v) => this.setPagination({ mode: v as PaginationPrefs["mode"] })),
+        h("span", { class: "oc-label" }, "Records"),
+        select([{ value: "view", label: "all in view" }, { value: "selected", label: "selected" }], o.scope, (v) => this.setPagination({ scope: v as PaginationPrefs["scope"] })),
+        h("span", { class: "oc-muted" }, `(${count}, in list order)`),
+      ),
+      o.mode === "template"
+        ? h("div", { class: "oc-row" },
+            h("label", { class: "oc-label", title: group ? `Start a new page whenever ${group} changes` : "Group the list to enable page breaks" },
+              h("input", { type: "checkbox", checked: o.pageBreaks, disabled: !group, on: { change: (e) => this.setPagination({ pageBreaks: (e.target as HTMLInputElement).checked }) } }),
+              ` new page for each ${group ?? "group (group the list first)"}`),
+            h("span", { class: "oc-muted" }, "Select the template block in InDesign; the gap above is used between copies."),
+          )
+        : h("div", { class: "oc-row" },
+            h("label", { class: "oc-label" },
+              h("input", { type: "checkbox", checked: o.headings, disabled: this.view.groupBy.length === 0, on: { change: (e) => this.setPagination({ headings: (e.target as HTMLInputElement).checked }) } }),
+              this.view.groupBy.length ? ` headings for ${this.view.groupBy.join(" › ")}` : " headings (group the list first)"),
+            h("span", { class: "oc-label" }, "Fields separated by"),
+            select([{ value: "paragraph", label: "paragraph" }, { value: "tab", label: "tab" }], o.separator, (v) => this.setPagination({ separator: v as PaginationPrefs["separator"] })),
+            h("span", { class: "oc-muted", title: "Paragraph styles named OC Heading 1, OC Heading 2… and OC Record are applied when they exist" }, "styles: OC Heading n, OC Record"),
+          ),
+      h("div", { class: "oc-row" },
+        h("button", { class: "oc-btn oc-primary", on: { click: () => void this.paginate() } }, "Paginate"),
+        h("span", { class: "oc-label" }, "PDF preset"),
+        presets.length
+          ? select(presets.map((p) => ({ value: p, label: p })), o.pdfPreset && presets.includes(o.pdfPreset) ? o.pdfPreset : presets[0]!, (v) => this.setPagination({ pdfPreset: v }))
+          : h("span", { class: "oc-muted" }, "(open a document)"),
       ),
     );
   }

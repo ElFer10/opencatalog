@@ -4,7 +4,18 @@
  * Units are millimetres on a single A4 page with 12 mm margins.
  */
 import { Bounds, gridOffsets, retargetEncoded, sampleKeyOf, unionBounds } from "../core/layout";
-import { DocumentAdapter, FieldLink, LinkedItem, PlaceResult, RepeatResult, decodeLink, encodeLink } from "../core/links";
+import {
+  DocumentAdapter,
+  FieldLink,
+  FlowItemLike,
+  LinkedItem,
+  PaginateResult,
+  PlaceResult,
+  RepeatResult,
+  TemplateInfo,
+  decodeLink,
+  encodeLink,
+} from "../core/links";
 
 export interface Run {
   text: string;
@@ -27,7 +38,12 @@ export interface MemFrame {
   runs: Run[];
   image?: string;
   table?: MemTable;
+  /** Threaded continuation of another frame's story: shows lines [from, to) of it. */
+  thread?: { first: number; from: number; to: number };
 }
+
+/** Height of one line in the simulated flow, in mm. */
+export const LINE_MM = 6;
 
 export type MemSelection = { frameId: number; offset?: number; more?: number[] } | null;
 
@@ -42,6 +58,8 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
   /** Paths that "exist" for image placement; empty = accept every path. */
   existingFiles = new Set<string>();
   undoSteps: string[] = [];
+  pageCount = 1;
+  exported: { path: string; preset: string }[] = [];
   private nextId = 1;
   onChange: () => void = () => {};
 
@@ -49,7 +67,7 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
 
   /** Next free spot down the left margin for a new frame. */
   private nextBounds(height: number, width = 90): Bounds {
-    const bottom = this.frames.reduce((m, f) => Math.max(m, f.bounds[2]), MARGINS[0] - 4);
+    const bottom = this.frames.filter((f) => f.page === "1").reduce((m, f) => Math.max(m, f.bounds[2]), MARGINS[0] - 4);
     const top = bottom + 4;
     return [top, MARGINS[1], top + height, MARGINS[1] + width];
   }
@@ -81,6 +99,7 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
   scan(): LinkedItem<MemRef>[] {
     const out: LinkedItem<MemRef>[] = [];
     for (const f of this.frames) {
+      if (f.thread && f.thread.first !== f.id) continue;
       const frameLink = decodeLink(f.label);
       if (frameLink) {
         out.push({ ref: { frameId: f.id }, link: frameLink, kind: f.kind === "graphic" ? "image" : "frame-text", current: f.kind === "graphic" ? f.image ?? "" : MemoryDocument.storyText(f), page: f.page });
@@ -195,14 +214,7 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
   repeatSelection(sourceId: string, keys: string[], gap: number): RepeatResult {
     const frames = this.selectedFrames();
     if (frames.length === 0) throw new Error("Select the frames that show one record first");
-    const links: FieldLink[] = [];
-    for (const f of frames) {
-      const l = decodeLink(f.label);
-      if (l) links.push(l);
-      for (const r of f.runs) { const x = decodeLink(r.link); if (x) links.push(x); }
-      for (const row of f.table?.rows ?? []) for (const c of row) { const x = decodeLink(c.link); if (x) links.push(x); }
-    }
-    const sampleKey = sampleKeyOf(links, sourceId);
+    const sampleKey = sampleKeyOf(this.linksOf(frames), sourceId);
     const targets = keys.filter((k) => k !== sampleKey);
     const block = unionBounds(frames.map((f) => f.bounds));
     const offsets = gridOffsets(block, MARGINS, targets.length, gap);
@@ -213,15 +225,110 @@ export class MemoryDocument implements DocumentAdapter<MemRef> {
         const copy: MemFrame = JSON.parse(JSON.stringify(f));
         copy.id = this.nextId++;
         copy.bounds = [f.bounds[0] + dy, f.bounds[1] + dx, f.bounds[2] + dy, f.bounds[3] + dx];
-        if (copy.label) copy.label = retargetEncoded(copy.label, key);
-        copy.runs = copy.runs.map((r) => (r.link ? { ...r, link: retargetEncoded(r.link, key) } : r));
-        if (copy.table) copy.table.rows = copy.table.rows.map((row) => row.map((c) => (c.link ? { ...c, link: retargetEncoded(c.link, key) } : c)));
+        this.retarget(copy, key);
         this.frames.push(copy);
       }
       placed.push(key);
     });
     this.onChange();
     return { sampleKey, placed, notPlaced: targets.slice(offsets.length) };
+  }
+
+  private linksOf(frames: MemFrame[]): FieldLink[] {
+    const links: FieldLink[] = [];
+    for (const f of frames) {
+      const l = decodeLink(f.label);
+      if (l) links.push(l);
+      for (const r of f.runs) { const x = decodeLink(r.link); if (x) links.push(x); }
+      for (const row of f.table?.rows ?? []) for (const c of row) { const x = decodeLink(c.link); if (x) links.push(x); }
+    }
+    return links;
+  }
+
+  private retarget(f: MemFrame, key: string): void {
+    if (f.label) f.label = retargetEncoded(f.label, key);
+    f.runs = f.runs.map((r) => (r.link ? { ...r, link: retargetEncoded(r.link, key) } : r));
+    if (f.table) f.table.rows = f.table.rows.map((row) => row.map((c) => (c.link ? { ...c, link: retargetEncoded(c.link, key) } : c)));
+  }
+
+  templateInfo(sourceId: string): TemplateInfo {
+    const frames = this.selectedFrames();
+    if (frames.length === 0) throw new Error("Select the frames that show one record first");
+    return { sampleKey: sampleKeyOf(this.linksOf(frames), sourceId), block: unionBounds(frames.map((f) => f.bounds)), area: [...MARGINS] as Bounds };
+  }
+
+  paginateTemplate(plan: { pages: { key: string; dx: number; dy: number }[][] }): PaginateResult {
+    const frames = this.selectedFrames();
+    if (frames.length === 0) throw new Error("Select the template first");
+    const basePage = Number(frames[0]!.page);
+    const before = this.pageCount;
+    plan.pages.forEach((slots, p) => {
+      const page = basePage + p;
+      this.pageCount = Math.max(this.pageCount, page);
+      slots.forEach((slot, i) => {
+        if (p === 0 && i === 0 && slot.dx === 0 && slot.dy === 0) {
+          for (const f of frames) this.retarget(f, slot.key); // the template becomes the first record
+          return;
+        }
+        for (const f of frames) {
+          const copy: MemFrame = JSON.parse(JSON.stringify(f));
+          copy.id = this.nextId++;
+          copy.page = String(page);
+          copy.bounds = [f.bounds[0] + slot.dy, f.bounds[1] + slot.dx, f.bounds[2] + slot.dy, f.bounds[3] + slot.dx];
+          this.retarget(copy, slot.key);
+          this.frames.push(copy);
+        }
+      });
+    });
+    this.onChange();
+    return { pagesAdded: this.pageCount - before };
+  }
+
+  paginateFlow(items: FlowItemLike[], separator: "paragraph" | "tab"): PaginateResult {
+    const sel = this.selection ? this.frame(this.selection.frameId) : null;
+    if (sel && (sel.kind !== "text" || sel.label || sel.thread)) throw new Error("Select an empty text frame, a text cursor, or nothing to start the flow");
+    const first = sel ?? this.addFrame("text", "", "1", (() => { const b = this.nextBounds(10, MARGINS[3] - MARGINS[1]); return [b[0], b[1], MARGINS[2], b[3]] as Bounds; })());
+    const sep = separator === "tab" ? "\t" : "\r";
+    const runs: Run[] = [];
+    if (first.runs.length && !MemoryDocument.storyText(first).endsWith("\r")) runs.push({ text: "\r" });
+    for (const it of items) {
+      if (it.kind === "heading") runs.push({ text: `${it.text}\r` });
+      else {
+        it.fields.forEach((f, i) => {
+          if (i > 0) runs.push({ text: sep });
+          runs.push({ text: f.text, link: encodeLink(f.link) });
+        });
+        runs.push({ text: "\r" });
+      }
+    }
+    first.runs.push(...runs);
+    // Thread continuation frames on new pages until every line fits.
+    const lines = MemoryDocument.storyText(first).replace(/\r$/, "").split("\r").length;
+    const capacity = (f: MemFrame) => Math.max(1, Math.floor((f.bounds[2] - f.bounds[0]) / LINE_MM));
+    const before = this.pageCount;
+    let shown = capacity(first);
+    first.thread = { first: first.id, from: 0, to: Math.min(lines, shown) };
+    let page = Number(first.page);
+    let guard = 0;
+    while (shown < lines && guard++ < 1000) {
+      page++;
+      this.pageCount = Math.max(this.pageCount, page);
+      const f = this.addFrame("text", "", String(page), [...MARGINS] as Bounds);
+      const cap = capacity(f);
+      f.thread = { first: first.id, from: shown, to: Math.min(lines, shown + cap) };
+      shown += cap;
+    }
+    this.selection = { frameId: first.id };
+    this.onChange();
+    return { pagesAdded: this.pageCount - before };
+  }
+
+  pdfPresets(): string[] {
+    return ["[High Quality Print]", "[Press Quality]", "[Smallest File Size]"];
+  }
+
+  exportPdf(path: string, preset: string): void {
+    this.exported.push({ path, preset });
   }
 
   reveal(item: LinkedItem<MemRef>): void {
