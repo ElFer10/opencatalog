@@ -1,6 +1,5 @@
 # OpenCatalog
 
-[![CI](https://github.com/OWNER/opencatalog/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/opencatalog/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP plugin.
@@ -137,7 +136,7 @@ inline images or keep records together across frame breaks.
 
 ## Download
 
-Ready-to-load plugin builds are attached to each [release](https://github.com/OWNER/opencatalog/releases):
+Ready-to-load plugin builds are attached to each [release](../../releases):
 download `opencatalog-plugin-x.y.z.zip`, unzip it and load its `manifest.json` in UXP Developer Tools
 (**Add Plugin** › **Load**). The user guide (in Spanish) is [docs/guia-de-uso.md](docs/guia-de-uso.md).
 
