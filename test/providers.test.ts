@@ -107,3 +107,22 @@ describe("loadFromBytes", () => {
     expect(() => loadFromBytes("a.xls", enc(""))).toThrow(/Unsupported/);
   });
 });
+
+describe("legacy encodings", () => {
+  it("detects Mac Roman (Excel for Mac 'CSV (Macintosh)')", async () => {
+    const { decodeTextDetailed } = await import("../src/providers/table");
+    const res = decodeTextDetailed(fixture("macroman.csv"));
+    expect(res.encoding).toBe("mac-roman");
+    expect(res.text).toContain("Gör så här;Kräftdjur");
+    expect(res.text).toContain("Blåbärsmousse");
+    const { source, encoding } = loadFromBytes("receptdatabas.csv", fixture("macroman.csv"));
+    expect(encoding).toBe("mac-roman");
+    expect(source.fields.map((f) => f.name)).toContain("Gör så här");
+  });
+  it("still detects Windows-1252 and honours a forced encoding", async () => {
+    const { decodeTextDetailed } = await import("../src/providers/table");
+    expect(decodeTextDetailed(fixture("latin1.csv")).encoding).toBe("windows-1252");
+    expect(decodeTextDetailed(fixture("macroman.csv"), "windows-1252").text).toContain("Gšr sŒ hŠr");
+    expect(decodeTextDetailed(enc("Kärnsmör")).encoding).toBe("utf-8");
+  });
+});

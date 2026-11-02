@@ -56,15 +56,67 @@ export function coerceNumber(text: string, decimalComma: boolean): Value {
   return n;
 }
 
-/** Decode bytes as UTF-8 (BOM stripped), falling back to Windows-1252 when invalid. */
-export function decodeText(bytes: Uint8Array): string {
+export type TextEncoding = "utf-8" | "utf-16" | "windows-1252" | "mac-roman";
+export type EncodingChoice = "auto" | TextEncoding;
+
+export const ENCODING_LABELS: Record<EncodingChoice, string> = {
+  auto: "Auto",
+  "utf-8": "UTF-8",
+  "utf-16": "UTF-16",
+  "windows-1252": "Windows (1252)",
+  "mac-roman": "Mac Roman",
+};
+
+/** Characters for bytes 0x80–0xFF in Mac OS Roman. */
+const MAC_ROMAN = "ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u00a0ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›\ufb01\ufb02‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\uf8ffÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ";
+
+/**
+ * Guess between Windows-1252 and Mac Roman for text that is not valid UTF-8.
+ * Accented letters (å ä ö é ñ ü…) sit in 0x80–0x9F in Mac Roman but in 0xC0–0xFF in Windows-1252,
+ * where 0x80–0x9F holds rare punctuation instead.
+ */
+export function guessLegacyEncoding(b: Uint8Array): "windows-1252" | "mac-roman" {
+  let low = 0;
+  let high = 0;
+  for (const c of b) {
+    if (c >= 0x80 && c <= 0x9f) low++;
+    else if (c >= 0xc0) high++;
+  }
+  return low > high ? "mac-roman" : "windows-1252";
+}
+
+/** Decode bytes, detecting the encoding unless one is forced. */
+export function decodeTextDetailed(bytes: Uint8Array, choice: EncodingChoice = "auto"): { text: string; encoding: TextEncoding } {
   let start = 0;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return { text: decodeUtf16(bytes.subarray(2), true), encoding: "utf-16" };
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return { text: decodeUtf16(bytes.subarray(2), false), encoding: "utf-16" };
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) start = 3;
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) return decodeUtf16(bytes.subarray(2), true);
-  if (bytes[0] === 0xfe && bytes[1] === 0xff) return decodeUtf16(bytes.subarray(2), false);
   const body = bytes.subarray(start);
+  if (choice === "utf-16") return { text: decodeUtf16(body, true), encoding: "utf-16" };
+  if (choice === "windows-1252") return { text: decodeWin1252(body), encoding: "windows-1252" };
+  if (choice === "mac-roman") return { text: decodeMacRoman(body), encoding: "mac-roman" };
   const utf8 = decodeUtf8(body);
-  return utf8 ?? decodeWin1252(body);
+  if (choice === "utf-8") return { text: utf8 ?? decodeUtf8Lossy(body), encoding: "utf-8" };
+  if (utf8 !== null) return { text: utf8, encoding: "utf-8" };
+  const legacy = guessLegacyEncoding(body);
+  return { text: legacy === "mac-roman" ? decodeMacRoman(body) : decodeWin1252(body), encoding: legacy };
+}
+
+/** Decode bytes as text (UTF-8, UTF-16 with BOM, Windows-1252 or Mac Roman, detected). */
+export function decodeText(bytes: Uint8Array, choice: EncodingChoice = "auto"): string {
+  return decodeTextDetailed(bytes, choice).text;
+}
+
+function decodeMacRoman(b: Uint8Array): string {
+  let s = "";
+  for (const c of b) s += c < 0x80 ? String.fromCharCode(c) : MAC_ROMAN[c - 0x80]!;
+  return s;
+}
+
+function decodeUtf8Lossy(b: Uint8Array): string {
+  let s = "";
+  for (const c of b) s += c < 0x80 ? String.fromCharCode(c) : "\ufffd";
+  return s;
 }
 
 function decodeUtf16(b: Uint8Array, le: boolean): string {

@@ -19,7 +19,7 @@
 .oc-searchrow { padding: 2px 8px; }
 .oc-search { width: 100%; box-sizing: border-box; }
 .oc-filters, .oc-fields { padding: 0 8px; border-bottom: 1px solid var(--oc-border); }
-.oc-fields { padding: 4px 8px; max-height: 45%; overflow: auto; }
+.oc-fields { padding: 4px 8px; max-height: 260px; overflow: auto; }
 .oc-fieldtoggle { margin-right: 12px; white-space: nowrap; }
 .oc-btn { padding: 3px 10px; border: 1px solid var(--oc-border); border-radius: 4px; background: transparent; color: var(--oc-fg); cursor: pointer; }
 .oc-btn.oc-primary { background: var(--oc-accent); border-color: var(--oc-accent); color: #fff; }
@@ -72,3 +72,17 @@
 .oc-help { font-size: 0.9em; }
 .oc-computed { border-top: 1px solid var(--oc-border); margin-top: 4px; }
 .oc-paginate { margin: 0 8px 4px; border-left: 2px solid var(--oc-accent); }
+
+/* UXP's flexbox shrinks children below their content height (browsers don't), which made the
+   list overlap the buttons. Every section keeps its natural height; only the list grows/shrinks. */
+.oc-panel > * { flex: 0 0 auto; }
+.oc-panel > .oc-grid { flex: 1 1 0; min-height: 120px; overflow: auto; }
+.oc-searchrow, .oc-toolbar, .oc-controls, .oc-docbar, .oc-report, .oc-status { flex-shrink: 0; }
+/* Compact controls: UXP's default Spectrum buttons are tall pills. */
+.oc-btn { height: 24px; line-height: 20px; font-size: 11px; padding: 0 10px; box-sizing: border-box; white-space: nowrap; }
+.oc-btn.oc-small { height: 20px; line-height: 16px; padding: 0 8px; }
+.oc-panel select, .oc-panel input[type="text"], .oc-panel input[type="number"] { font-size: 11px; }
+.oc-search { height: 24px; }
+/* When everything is expanded the panel scrolls as a whole instead of squashing the list. */
+.oc-panel { overflow-y: auto; }
+.oc-panel > .oc-grid { min-height: 180px; }

@@ -47,7 +47,7 @@ import {
   withKeyField,
 } from "../core";
 import type { Host, PickedFile } from "../hosts/host";
-import { SUPPORTED_EXTENSIONS, loadFromBytes, toCsv } from "../providers";
+import { ENCODING_LABELS, EncodingChoice, SUPPORTED_EXTENSIONS, TextEncoding, loadFromBytes, toCsv } from "../providers";
 import { add, clear, h, select } from "./dom";
 import { renderFieldsEditor } from "./fields-editor";
 
@@ -86,6 +86,8 @@ const DEFAULT_PAGINATION: PaginationPrefs = { mode: "template", scope: "view", p
 interface Settings {
   last?: { token: string; name: string; sheet?: string };
   sources: Record<string, SourcePrefs>;
+  /** Forced text encoding per data file name (absent = auto-detect). */
+  encodings?: Record<string, EncodingChoice>;
 }
 
 interface Report {
@@ -115,6 +117,7 @@ export class Panel {
   private file: PickedFile | null = null;
   private sheets: string[] = [];
   private sheet: string | undefined;
+  private encoding: TextEncoding | undefined;
   private view: ViewSpec = emptyView();
   private hidden = new Set<string>();
   private collapsed = new Set<string>();
@@ -192,7 +195,8 @@ export class Panel {
 
   openPicked(file: PickedFile, sheet?: string, keepState = false): void {
     try {
-      const { source, sheets } = loadFromBytes(file.name, file.bytes, { sheet });
+      const { source, sheets, encoding } = loadFromBytes(file.name, file.bytes, { sheet, encoding: this.settings.encodings?.[file.name] ?? "auto" });
+      this.encoding = encoding;
       this.file = file;
       this.sheets = sheets ?? [];
       this.sheet = sheets ? sheet ?? sheets[0] : undefined;
@@ -667,6 +671,23 @@ export class Panel {
       ds && this.file?.token ? h("button", { class: "oc-btn", title: "Read the file again", on: { click: () => void this.reload() } }, "Reload") : null,
       ds ? h("span", { class: "oc-source", title: ds.name }, ds.name) : h("span", { class: "oc-source oc-muted" }, "No data source"),
     );
+    if (ds && this.file && this.encoding) {
+      const forced = this.settings.encodings?.[this.file.name] ?? "auto";
+      const opts = (Object.keys(ENCODING_LABELS) as EncodingChoice[]).map((k) => ({
+        value: k,
+        label: k === "auto" ? `Auto (${ENCODING_LABELS[this.encoding!]})` : ENCODING_LABELS[k],
+      }));
+      this.toolbar.append(
+        h("label", { class: "oc-label", title: "Text encoding of the file. Use Mac Roman for CSV files saved by Excel for Mac as 'CSV (Macintosh)'." }, "Encoding"),
+        select(opts, forced, (v) => {
+          const file = this.file;
+          if (!file) return;
+          this.settings.encodings = { ...(this.settings.encodings ?? {}), [file.name]: v as EncodingChoice };
+          if (v === "auto") delete this.settings.encodings[file.name];
+          this.openPicked(file, this.sheet, true);
+        }),
+      );
+    }
     if (ds && this.sheets.length > 1) {
       this.toolbar.append(
         h("label", { class: "oc-label" }, "Sheet"),

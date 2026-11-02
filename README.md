@@ -9,7 +9,8 @@ Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP p
 ## What works today
 
 - Data sources: **CSV / TXT / TSV** (delimiter detection, quoted fields, decimal commas,
-  UTF-8 with or without BOM, Windows-1252 fallback), **Excel .xlsx** (all sheets, dates, booleans,
+  UTF-8 with or without BOM, UTF-16, Windows-1252 and Mac Roman detection — Excel for Mac's
+  "CSV (Macintosh)" — with a manual **Encoding** override in the panel), **Excel .xlsx** (all sheets, dates, booleans,
   shared and inline strings) and **JSON** (finds the record array, flattens nested objects).
 - Automatic field types (text, number, date, boolean, image path) and key field detection
   (unique column, preferring names like `SKU`, `ID`, `Code`). The key can be changed in the panel.
