@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Typecheck, unit tests and build
+        run: npm run check
+      - name: Helper tests
+        run: npm run test:helper
+      - name: Browser end-to-end tests
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+          node test/e2e/phase1.cjs
+          node test/e2e/phase2.cjs
+          node test/e2e/phase3.cjs
+          node test/e2e/phase4.cjs
+      - name: Upload plugin build
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencatalog-plugin
+          path: dist/plugin

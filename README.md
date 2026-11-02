@@ -1,5 +1,8 @@
 # OpenCatalog
 
+[![CI](https://github.com/OWNER/opencatalog/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/opencatalog/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Open-source, data-driven catalog publishing for Adobe InDesign, built as a UXP plugin.
 
 > Status: **phase 4 (0.5.0)** — files and remote sources (REST/JSON/CSV URLs, Notion, SQL via a
@@ -132,6 +135,12 @@ inline images or keep records together across frame breaks.
   `oc.exportPdf(path, preset?)`, `oc.document`, `oc.indesign` (the UXP InDesign DOM) and `oc.log()`.
   Scripts are saved per data source.
 
+## Download
+
+Ready-to-load plugin builds are attached to each [release](https://github.com/OWNER/opencatalog/releases):
+download `opencatalog-plugin-x.y.z.zip`, unzip it and load its `manifest.json` in UXP Developer Tools
+(**Add Plugin** › **Load**). The user guide (in Spanish) is [docs/guia-de-uso.md](docs/guia-de-uso.md).
+
 ## Install in InDesign (development)
 
 Requirements: Node.js 18+, InDesign 2023 (18.5) or later, and Adobe **UXP Developer Tools**
@@ -184,6 +193,10 @@ test/          unit tests and fixtures
 | 2 — Layout | Computed fields, number formats, images from URLs, repeated layout blocks, linked tables, synchronize (new/changed/deleted) ✅ |
 | 3 — Pagination | Template and text-flow pagination, page breaks per group, page insertion, PDF export ✅ (guide/master/position modes later) |
 | 4 — Advanced | Local helper for ODBC/SQLite, REST/URL and Notion connectors, versions, one PDF per record, scripting ✅ |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [changelog](CHANGELOG.md).
 
 ## Clean-room policy
 

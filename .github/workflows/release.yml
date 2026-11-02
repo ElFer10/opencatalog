@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Package the plugin
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          (cd dist && cp -r plugin opencatalog-plugin && zip -r "../release/opencatalog-plugin-${VERSION}.zip" opencatalog-plugin)
+          cp tools/opencatalog-helper.py release/
+          cp docs/guia-de-uso.md release/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
