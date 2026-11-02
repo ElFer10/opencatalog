@@ -206,5 +206,6 @@ mediante un pequeño helper local), coloca campos y los mantiene sincronizados, 
 gestiona versiones por idioma o mercado, genera un PDF por registro y permite automatizar con scripts.
 Añade formatos de campo, campos calculados con expresiones, imágenes desde URL, tablas vinculadas,
 repetición de un bloque de producto por registro y detección de registros nuevos, cambiados y borrados.
+Guía paso a paso: [docs/guia-de-uso.md](docs/guia-de-uso.md).
 Para probarla: `npm install && npm run build`, luego en UXP Developer Tools → *Add Plugin* →
 `dist/plugin/manifest.json` → *Load*.
